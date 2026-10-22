@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.3  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.4  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.3';
+  const VER = '1.4';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 같은 버전이 이미 떠 있으면 다시 보여주기만, 다른(옛) 버전이면 지우고 새로 띄운다(깃헙 자동 업데이트 대응)
@@ -103,35 +103,135 @@
       await sleep(150);
       pr.onBlur && pr.onBlur(fakeEv(el, 'blur'));
       await sleep(250);
-    },
-    '키보드 입력': async (el, v) => {
-      el.focus(); el.click(); await sleep(100);
-      el.select && el.select();
-      execCmd('selectAll', false, null);
-      execCmd('insertText', false, v);
-      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-      await sleep(150);
-      el.blur(); el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-      await sleep(250);
-    },
-    '한 글자씩 입력': async (el, v) => {
-      el.focus(); el.select && el.select();
-      execCmd('delete', false, null);
-      for (const ch of v.replace(/-/g, '')) {
-        el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
-        execCmd('insertText', false, ch);
-        el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
-        await sleep(30);
-      }
-      if (el.value.replace(/\D/g, '') === v.replace(/\D/g, '') && el.value !== v) { /* 마스크 입력이면 하이픈 자동 */ }
-      else if (el.value !== v) { el.select && el.select(); execCmd('insertText', false, v); }
-      el.blur(); el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-      await sleep(250);
     }
   };
+  // ---------- 달력 클릭으로 날짜 고르기 (세일즈원 날짜칸은 입력이 아니라 달력 클릭으로만 바뀜) ----------
+  const isLeaf = e => ![...e.children].some(c => c.textContent.trim());
+  const MONTH_RE = /^(\d{4})년\s*(\d{1,2})월$/;
+  function calHeads() {
+    return [...document.querySelectorAll('div,span,p,h1,h2,h3,h4,h5,h6,strong,button,th,td')]
+      .filter(e => !inPanel(e) && MONTH_RE.test(e.textContent.trim()) && isLeaf(e) && vis(e));
+  }
+  const numLeafs = root => [...root.querySelectorAll('*')].filter(e => /^\d{1,2}$/.test(e.textContent.trim()) && isLeaf(e) && vis(e));
+  function calMonths() {
+    const heads = calHeads();
+    const raw = heads.map(h => {
+      let panel = h;
+      for (let i = 0; i < 10 && panel; i++) {
+        panel = panel.parentElement;
+        if (panel && numLeafs(panel).length >= 28) break;
+      }
+      const [, y, m] = h.textContent.trim().match(MONTH_RE);
+      return { y: +y, m: +m, head: h, panel };
+    }).filter(x => x.panel);
+    // 1부터 연속으로 증가하는 묶음(28개 이상)을 한 달로 본다. 앞뒤 회색 날짜는 제외됨.
+    // 두 달이 한 덩어리에 있으면 제목 순서대로 묶음을 짝지음.
+    return raw.map(x => {
+      const cells = numLeafs(x.panel);
+      const runs = [];
+      for (let i = 0; i < cells.length; i++) {
+        if (cells[i].textContent.trim() !== '1') continue;
+        const run = new Map();
+        for (let j = i, n = 1; j < cells.length && +cells[j].textContent.trim() === n; j++, n++) run.set(n, cells[j]);
+        if (run.size >= 28) { runs.push(run); i += run.size - 1; }
+      }
+      const same = raw.filter(o => o.panel === x.panel);
+      const k = same.indexOf(x);
+      return { ...x, days: runs[k] || runs[0] || new Map() };
+    });
+  }
+  function calArrows(ms) {
+    if (!ms.length) return {};
+    const first = ms[0].head.getBoundingClientRect(), last = ms[ms.length - 1].head.getBoundingClientRect();
+    let root = ms[0].panel;
+    for (let i = 0; i < 6 && root && !ms.every(x => root.contains(x.head)); i++) root = root.parentElement;
+    root = (root && root.parentElement) || document.body;
+    const cy = (first.top + first.bottom) / 2;
+    const cands = [...root.querySelectorAll('button,[role="button"],svg,span,div,i,a')].filter(e => {
+      if (inPanel(e) || !vis(e)) return false;
+      const t = e.textContent.trim();
+      if (t && !/^[<>‹›«»←→]$/.test(t)) return false;
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.width < 60 && r.height < 60 && Math.abs((r.top + r.bottom) / 2 - cy) < 22;
+    });
+    const L = cands.filter(e => e.getBoundingClientRect().right <= first.left + 2).sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left);
+    const R = cands.filter(e => e.getBoundingClientRect().left >= last.right - 2).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+    const top = e => { let n = e; while (n.parentElement && n.parentElement.getBoundingClientRect().width < 60 && n.parentElement.getBoundingClientRect().height < 60) n = n.parentElement; return n; };
+    return { prev: L[0] && top(L[0]), next: R[0] && top(R[0]) };
+  }
+  async function calClickDay(ymdStr) {
+    const [y, m, d] = ymdStr.split('-').map(Number);
+    for (let guard = 0; guard < 30; guard++) {
+      const ms = calMonths();
+      if (!ms.length) return false;
+      const hit = ms.find(x => x.y === y && x.m === m);
+      if (hit) {
+        const el = hit.days.get(d); if (!el) return false;
+        await realClick(el);
+        await sleep(350);
+        return true;
+      }
+      const diff = (y * 12 + m) - (ms[0].y * 12 + ms[0].m);
+      const ar = calArrows(ms);
+      const btn = diff > 0 ? ar.next : ar.prev;
+      if (!btn) return false;
+      await realClick(btn);
+      await sleep(300);
+    }
+    return false;
+  }
+  function closeCal(inp) {
+    [inp, document.activeElement, document.body].forEach(t => t && t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true })));
+  }
+  // getInputs(): [시작, 끝] 또는 [하루] input, values: 같은 순서의 날짜
+  async function pickByCalendar(getInputs, values) {
+    const ins = getInputs();
+    if (!ins.length) return false;
+    const want = ins.map((_, i) => values[i] != null ? values[i] : values[0]);
+    if (ins.every((e, i) => e.value === want[i])) return true;
+    const open = async () => {
+      if (calHeads().length) return true;
+      const el = getInputs()[0];
+      await realClick(el);
+      if (await waitFor(() => calHeads().length, 1500)) return true;
+      const box = el.closest('.gui-date-picker, .gui-date-range, .MuiFormControl-root') || el.parentElement;
+      const icon = box && [...(box.closest('.gui-date-picker') || box).querySelectorAll('button')].filter(vis).pop();
+      if (icon) { await realClick(icon); if (await waitFor(() => calHeads().length, 1500)) return true; }
+      return false;
+    };
+    if (!(await open())) { log('  달력이 열리지 않았습니다.'); return false; }
+    for (let i = 0; i < want.length; i++) {
+      if (i > 0 && !calHeads().length) { const ok2 = await open(); if (!ok2) break; }
+      if (!(await calClickDay(want[i]))) { log(`  달력에서 ${want[i]}을(를) 찾지 못했습니다.`); break; }
+    }
+    await sleep(400);
+    if (calHeads().length) { closeCal(getInputs()[0]); await sleep(300); }
+    const now = getInputs().map(e => e.value);
+    S.dateTries = (S.dateTries || []).concat(`${S.step}: 달력 클릭 → ${now.join(' ~ ')}`);
+    return now.every((v, i) => v === want[i]);
+  }
+
+  // 일반 텍스트칸(프로그램명 등) 값 넣기: 덮어쓰기만 하고 이어 붙이지 않음
+  async function setText(el, v) {
+    if (el.value === v) return true;
+    await setInput(el, v);
+    if (el.value === v) return true;
+    el.focus(); el.select && el.select();
+    execCmd('insertText', false, v);
+    await sleep(200);
+    el.blur();
+    return el.value === v;
+  }
+
   // getInputs(): 현재 화면의 날짜 input 배열, values: 넣을 값 배열, ok(): 조회 결과가 맞는지
   async function setDatesAndQuery(scope, getInputs, values, ok) {
+    if (await pickByCalendar(getInputs, values)) {
+      const now = getInputs().map(e => e.value).join(' ~ ');
+      const q = findBtn(scope(), '조회'); if (q) await realClick(q);
+      await sleep(1200);
+      if (await waitFor(ok, 5000)) { log(`  날짜 입력 성공(달력 클릭): ${now}`); return true; }
+      log(`  달력으로 날짜는 바뀌었지만 조회 결과가 맞지 않습니다: ${now}`);
+    }
     for (const [way, fn] of Object.entries(DATE_WAYS)) {
       if (S.stop) throw STOP;
       const ins = getInputs();
@@ -437,7 +537,8 @@
       const rows = renderedRows(g);
       return rows.every(r => { const d = (r.cells.broadStrDtm || '').slice(0, 10); return d >= sd && d <= ed && (!kw || norm(r.cells.pgmTitleNm).includes(norm(kw))); });
     };
-    const done = await setDatesAndQuery(listPanel, () => getIns().filter(Boolean), [sd, ed, kw], ok);
+    if (!(await setText(getIns()[2], kw))) log(`  ❗ 프로그램명 입력 확인 필요: 화면값 "${getIns()[2].value}"`);
+    const done = await setDatesAndQuery(listPanel, () => getIns().slice(0, 2).filter(Boolean), [sd, ed], ok);
     if (!done) { log('❗ 조회 조건이 화면에 반영되지 않았습니다. [진단 내용 복사]로 알려주세요.'); S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '조회 조건 반영 실패', msg: `${sd}~${ed} ${kw}` }); return false; }
     await waitFor(() => listGrid() && renderedRows(listGrid()).length, 3000);
     return true;
