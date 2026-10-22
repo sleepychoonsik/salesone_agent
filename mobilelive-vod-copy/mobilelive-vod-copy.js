@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.1  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.2  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -14,11 +14,16 @@
  */
 (async () => {
   'use strict';
-  if (window.__MLCOPY && window.__MLCOPY.show) { window.__MLCOPY.show(); return; }
-
-  const VER = '1.1';
+  const VER = '1.2';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
+  // 같은 버전이 이미 떠 있으면 다시 보여주기만, 다른(옛) 버전이면 지우고 새로 띄운다(깃헙 자동 업데이트 대응)
+  if (window.__MLCOPY) {
+    if (window.__MLCOPY.ver === VER && window.__MLCOPY.show) { window.__MLCOPY.show(); return; }
+    if (window.__MLCOPY.running && window.__MLCOPY.running()) { alert('이전 버전이 실행 중입니다. 중지한 뒤 다시 눌러주세요.'); return; }
+    const old = document.getElementById(PANEL_ID); if (old) old.remove();
+    window.__MLCOPY = null;
+  }
   const S = { stop: false, running: false, autoSave: false, targets: [], step: '대기', cur: null, errors: [], logs: [] };
   const setStep = name => { S.step = name; };
 
@@ -726,7 +731,7 @@
   });
   $('[data-r="auto"]').addEventListener('change', e => { S.autoSave = e.target.checked; });
 
-  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) doScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER };
+  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) doScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER, running: () => S.running };
   log(`v${VER} 시작. 대상 확인 후 [선택 항목 실행]을 누르세요.`);
   await doScan();
 })();
