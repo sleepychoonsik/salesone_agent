@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.6  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.7  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -8,14 +8,14 @@
  *   2) 각 편성의 상품코드 칸을 더블클릭해 상품 편성 화면으로 이동하고, 방송일시/프로그램명이 맞는지 확인한다.
  *      (틀리면 방송일시 캘린더 > 프로그램 조회 팝업에서 해당 편성을 찾아 들어간다.)
  *   3) 편성상품 복사 팝업에서 프로그램명 괄호 안 원방송 일시(예: 10/1 17시)로 조회하고,
- *      같은 시간에 여러 개면 브랜드명(와니/AM)이 들어간 편성을 골라 편성 상품 적용 > 확인.
+ *      같은 시간에 여러 개면 '와니'가 들어간 편성을 골라 편성 상품 적용 > 확인. (SJ와니 전용, AM은 운영 종료로 제외)
  *   4) 1번 상품 주력상품 체크 > (확인 후) 저장 > 확인, 목록으로 돌아가 상품코드가 채워졌는지 검증.
  * 저장 전에는 기본적으로 한 건씩 확인을 받는다. 자동화가 화면을 못 찾으면 멈추고 직접 처리 후 [계속]을 누르게 한다.
  * 문제가 생기면 패널의 [진단 내용 복사]로 버전·단계·오류·URL·화면 요약을 클립보드에 담아 Claude에게 붙여넣는다.
  */
 (async () => {
   'use strict';
-  const VER = '1.6';
+  const VER = '1.7';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
@@ -379,7 +379,7 @@
 
   // 확인/알림 창 처리 (확인 버튼을 눌러 닫고 메시지를 모은다)
   const OK_LABELS = ['확인', '예', 'OK'];
-  async function handleConfirms({ max = 3, firstWait = 5000, nextWait = 2000 } = {}) {
+  async function handleConfirms({ max = 3, firstWait = 5000, nextWait = 2000, doneRe = null } = {}) {
     const msgs = [];
     for (let i = 0; i < max; i++) {
       const btn = await waitFor(() => {
@@ -397,9 +397,11 @@
         if (m.replace(/확인|취소|닫기|\s/g, '').length > 2 || box.matches('.MuiDialog-paper, [role="dialog"]')) break;
       }
       msgs.push(m);
+      const isDone = doneRe && doneRe.test(m);
       log('  └ 알림창: ' + (m || '(내용 없음)') + ' → 확인');
       await realClick(btn);
       await sleep(600);
+      if (isDone) break;
     }
     return msgs;
   }
@@ -423,11 +425,11 @@
     const y = mo > tm ? ty - 1 : ty;
     return { date: `${y}-${pad(mo)}-${pad(+m[2])}`, time: `${pad(+m[3])}:${pad(m[4] ? +m[4] : 0)}` };
   }
-  const AM_RE = /아뜰리에|마졸리|(^|[^A-Za-z])AM([^A-Za-z]|$)/i;
   const WANI_RE = /와니|WANI/i;
-  const brandOf = pgm => (WANI_RE.test(pgm) ? 'WANI' : AM_RE.test(pgm) ? 'AM' : null);
-  const brandMatch = (name, b) => (b === 'WANI' ? WANI_RE.test(name) : b === 'AM' ? AM_RE.test(name) : false);
-  const BRAND_LABEL = { WANI: '와니', AM: 'AM' };
+  const brandOf = pgm => (WANI_RE.test(pgm) ? 'WANI' : null);
+  const brandMatch = (name, b) => b === 'WANI' && WANI_RE.test(name);
+  const BRAND_LABEL = { WANI: '와니' };
+  const KW = '와니'; // 프로그램명 조회어 (SJ와니 전용)
 
   // ---------- 패널 UI ----------
   const css = `
@@ -452,7 +454,7 @@
   P.innerHTML = `
 <div class="h"><span>모바일라이브 VOD 편성상품 복사 v${VER}</span><button data-a="close" title="닫기">✕</button></div>
 <div class="b">
-  <div class="row" style="align-items:center">방송일자 <input data-r="sd" size="10" style="width:92px"> ~ <input data-r="ed" size="10" style="width:92px"> 프로그램명 <input data-r="kw" style="width:60px"></div>
+  <div class="row" style="align-items:center">방송일자 <input data-r="sd" size="10" style="width:92px"> ~ <input data-r="ed" size="10" style="width:92px"> <span style="color:#555">프로그램명 와니</span></div>
   <div class="row"><button class="btn p" data-a="search">조회 + 대상 찾기</button><button class="btn" data-a="scan">대상 다시 찾기</button><button class="btn" data-a="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button><span data-r="cnt" style="align-self:center;color:#555"></span></div>
   <div class="t" data-r="list"></div>
   <label style="display:block;margin:4px 0"><input type="checkbox" data-r="auto"> 저장 전 확인 없이 자동 저장 (익숙해진 뒤 사용)</label>
@@ -524,7 +526,7 @@
     S.targets.forEach((t, i) => {
       const ok = t.orig && t.brand;
       const lb = document.createElement('label');
-      lb.innerHTML = `<input type="checkbox" ${ok ? 'checked' : 'disabled'} data-i="${i}"><span><b>${t.start}</b> ${t.pgm.replace(/</g, '&lt;')}<br><small>${ok ? `원방송 ${t.orig.date} ${t.orig.time} · 브랜드 ${BRAND_LABEL[t.brand]}` : '⚠ 원방송 일시/브랜드를 읽을 수 없어 제외'}</small></span>`;
+      lb.innerHTML = `<input type="checkbox" ${ok ? 'checked' : 'disabled'} data-i="${i}"><span><b>${t.start}</b> ${t.pgm.replace(/</g, '&lt;')}<br><small>${ok ? `원방송 ${t.orig.date} ${t.orig.time} ` : '⚠ 원방송 일시를 읽을 수 없거나 와니 편성이 아니라 제외'}</small></span>`;
       L.appendChild(lb);
     });
     $('[data-r="cnt"]').textContent = `[VOD] 상품 빈 편성 ${S.targets.length}건`;
@@ -539,16 +541,15 @@
     try { o = JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {}; } catch (e) { o = {}; }
     $('[data-r="sd"]').value = dayOff(0);
     $('[data-r="ed"]').value = dayOff(o.days != null ? o.days : 30);
-    $('[data-r="kw"]').value = o.kw || '와니';
   }
   function saveSettings() {
     const sd = new Date($('[data-r="sd"]').value), ed = new Date($('[data-r="ed"]').value);
     const days = Math.round((ed - sd) / 86400000);
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ kw: $('[data-r="kw"]').value.trim(), days: isNaN(days) ? 30 : days })); } catch (e) { /* 저장 불가 무시 */ }
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ days: isNaN(days) ? 30 : days })); } catch (e) { /* 저장 불가 무시 */ }
   }
   async function searchList() {
     setStep('0 아이템 편성 조회');
-    const sd = $('[data-r="sd"]').value.trim(), ed = $('[data-r="ed"]').value.trim(), kw = $('[data-r="kw"]').value.trim();
+    const sd = $('[data-r="sd"]').value.trim(), ed = $('[data-r="ed"]').value.trim(), kw = KW;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(sd) || !/^\d{4}-\d{2}-\d{2}$/.test(ed)) { log('❗ 방송일자를 YYYY-MM-DD 형식으로 넣어주세요.'); return false; }
     saveSettings();
     if (!(await goList(true))) { log('❗ 아이템 편성 > 모바일라이브 화면을 찾지 못했습니다. 그 화면을 연 뒤 [조회 + 대상 찾기]를 눌러주세요.'); return false; }
@@ -742,8 +743,9 @@
     let dlg = await waitFor(() => dialogByTitle('편성상품 복사'), 15000);
     // 세일즈원 팝업은 뜨는 데 시간이 걸림: 날짜칸과 목록이 그려질 때까지 기다린다
     if (dlg) {
-      await waitFor(() => { const d = dialogByTitle('편성상품 복사'); return d && d.querySelector('input[name="startDate"]') && popupRowsNow(d).length; }, 12000);
-      await sleep(700);
+      // 기본 한 달치 목록이 그려지길 기다리지 않고, 날짜칸이 보이면 바로 하루치로 다시 조회한다(속도 개선)
+      await waitFor(() => { const d = dialogByTitle('편성상품 복사'); return d && d.querySelector('input[name="startDate"]'); }, 12000);
+      await sleep(300);
     }
     if (!dlg) { await manual('[편성상품 복사] 팝업을 열어주세요.'); dlg = dialogByTitle('편성상품 복사'); if (!dlg) return 'skip'; }
 
@@ -797,7 +799,7 @@
     else {
       nativeMsgs.length = 0;
       await realClick(apply);
-      const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 3000 })).concat(nativeMsgs);
+      const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 3000, doneRe: /등록됩니다|등록되었/ })).concat(nativeMsgs);
       const reg = msgs.join(' ').match(/(\d+)\s*개의?\s*상품/); if (reg) log(`  복사 대상 상품 ${reg[1]}개`);
       const err = errIn(msgs);
       if (err) { await manual(`적용 중 메시지: ${err}\n화면을 확인해 주세요.`); }
@@ -846,7 +848,7 @@
       nativeMsgs.length = 0;
       await realClick(save);
       log('  저장 버튼 클릭');
-      const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 6000 })).concat(nativeMsgs);
+      const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 6000, doneRe: /정상적으로|반영되었|저장되었|완료되었/ })).concat(nativeMsgs);
       if (!msgs.length) log('  ⚠ 저장 후 확인창이 뜨지 않았습니다.');
       const err = errIn(msgs);
       if (err) { log('  ❗ 저장 메시지: ' + err); await manual(`저장 중 메시지: ${err}\n화면을 확인해 주세요.`); }
