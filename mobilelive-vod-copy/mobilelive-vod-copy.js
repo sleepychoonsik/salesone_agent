@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5.1  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,9 +15,29 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.5';
+  const VER = '1.5.1';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
+  // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
+  if (!window.__MLCOPY_FRESH) {
+    try {
+      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 4000);
+      const R = 'sleepychoonsik/salesone_agent', F = 'mobilelive-vod-copy/mobilelive-vod-copy.js';
+      const sha = (await (await fetch(`https://api.github.com/repos/${R}/commits/main`, { headers: { Accept: 'application/vnd.github.sha' }, cache: 'no-store', signal: ctl.signal })).text()).trim();
+      if (/^[0-9a-f]{40}$/.test(sha)) {
+        const code = await (await fetch(`https://raw.githubusercontent.com/${R}/${sha}/${F}`, { signal: ctl.signal })).text();
+        const m = code.match(/const VER = '([^']+)'/);
+        clearTimeout(tm);
+        if (m && m[1] !== VER) {
+          window.__MLCOPY_FRESH = true;
+          setTimeout(() => { window.__MLCOPY_FRESH = false; }, 5000);
+          (0, eval)(code);
+          return;
+        }
+      }
+      clearTimeout(tm);
+    } catch (e) { /* 확인 실패 시 지금 버전으로 진행 */ }
+  }
   // 같은 버전이 이미 떠 있으면 다시 보여주기만, 다른(옛) 버전이면 지우고 새로 띄운다(깃헙 자동 업데이트 대응)
   if (window.__MLCOPY) {
     if (window.__MLCOPY.ver === VER && window.__MLCOPY.show) { window.__MLCOPY.show(); return; }
@@ -193,10 +213,10 @@
       if (calHeads().length) return true;
       const el = getInputs()[0];
       await realClick(el);
-      if (await waitFor(() => calHeads().length, 1500)) return true;
+      if (await waitFor(() => calHeads().length, 3000)) return true;
       const box = el.closest('.gui-date-picker, .gui-date-range, .MuiFormControl-root') || el.parentElement;
       const icon = box && [...(box.closest('.gui-date-picker') || box).querySelectorAll('button')].filter(vis).pop();
-      if (icon) { await realClick(icon); if (await waitFor(() => calHeads().length, 1500)) return true; }
+      if (icon) { await realClick(icon); if (await waitFor(() => calHeads().length, 3000)) return true; }
       return false;
     };
     if (!(await open())) { log('  달력이 열리지 않았습니다.'); return false; }
@@ -229,7 +249,7 @@
       const now = getInputs().map(e => e.value).join(' ~ ');
       const q = findBtn(scope(), '조회'); if (q) await realClick(q);
       await sleep(1200);
-      if (await waitFor(ok, 5000)) { log(`  날짜 입력 성공(달력 클릭): ${now}`); return true; }
+      if (await waitFor(ok, 12000)) { log(`  날짜 입력 성공(달력 클릭): ${now}`); return true; }
       log(`  달력으로 날짜는 바뀌었지만 조회 결과가 맞지 않습니다: ${now}`);
     }
     for (const [way, fn] of Object.entries(DATE_WAYS)) {
@@ -243,7 +263,7 @@
       const now = getInputs().map(e => e.value).join(' ~ ');
       const q = findBtn(scope(), '조회'); if (q) await realClick(q);
       await sleep(1200);
-      if (await waitFor(ok, 4000)) { log(`  입력 성공(${way}): ${now}`); return true; }
+      if (await waitFor(ok, 8000)) { log(`  입력 성공(${way}): ${now}`); return true; }
       log(`  입력 시도 실패(${way}): 화면값 ${now}`);
       S.dateTries = (S.dateTries || []).concat(`${S.step}: ${way} → ${now}`);
     }
@@ -604,8 +624,8 @@
     const adorn = inp.closest('.MuiInputBase-root');
     const cal = adorn && [...adorn.querySelectorAll('button')].find(vis);
     if (cal) await realClick(cal); else await realClick(inp);
-    let dlg = await waitFor(() => dialogByTitle('프로그램 조회'), 3000);
-    if (!dlg && cal) { await realClick(inp); dlg = await waitFor(() => dialogByTitle('프로그램 조회'), 3000); }
+    let dlg = await waitFor(() => dialogByTitle('프로그램 조회'), 10000);
+    if (!dlg && cal) { await realClick(inp); dlg = await waitFor(() => dialogByTitle('프로그램 조회'), 10000); }
     if (!dlg) return false;
     const day = t.start.slice(0, 10);
     const curDlg = () => dialogByTitle('프로그램 조회') || dlg;
@@ -697,7 +717,12 @@
     setStep('4 편성상품 복사 팝업 조회');
     const copyBtn = findBtn(p, '편성상품 복사');
     if (copyBtn) await realClick(copyBtn);
-    let dlg = await waitFor(() => dialogByTitle('편성상품 복사'), 5000);
+    let dlg = await waitFor(() => dialogByTitle('편성상품 복사'), 15000);
+    // 세일즈원 팝업은 뜨는 데 시간이 걸림: 날짜칸과 목록이 그려질 때까지 기다린다
+    if (dlg) {
+      await waitFor(() => { const d = dialogByTitle('편성상품 복사'); return d && d.querySelector('input[name="startDate"]') && popupRowsNow(d).length; }, 12000);
+      await sleep(700);
+    }
     if (!dlg) { await manual('[편성상품 복사] 팝업을 열어주세요.'); dlg = dialogByTitle('편성상품 복사'); if (!dlg) return 'skip'; }
 
     const { date, time } = t.orig;
@@ -724,6 +749,8 @@
 
     // 5) 원방송 편성 고르기
     setStep('5 원방송 편성 선택');
+    await waitFor(() => popupRowsNow(curDlg()).length, 10000);
+    await sleep(500);
     const { all } = await popupRows(curDlg());
     const atTime = all.filter(r => r.dtm === want);
     let cand = atTime.filter(r => brandMatch(r.name, t.brand));
