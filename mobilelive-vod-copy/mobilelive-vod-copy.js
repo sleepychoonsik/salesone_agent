@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.4  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.4.1  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.4';
+  const VER = '1.4.1';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 같은 버전이 이미 떠 있으면 다시 보여주기만, 다른(옛) 버전이면 지우고 새로 띄운다(깃헙 자동 업데이트 대응)
@@ -864,6 +864,15 @@
       L.push('하단 탭: ' + [...new Set(tabs)].join(', '));
       const focus = dCopy || dPgm || (S.step.startsWith('7') || S.step.startsWith('8') ? pp : null);
       if (focus) ex = compactHTML(focus);
+      const ms = calMonths();
+      if (ms.length) {
+        L.push(`달력 열림: ${ms.map(x => `${x.y}-${x.m}(날짜 ${x.days.size}개)`).join(', ')} / 이동버튼 ${(() => { const a = calArrows(ms); return `${a.prev ? '‹있음' : '‹없음'} ${a.next ? '›있음' : '›없음'}`; })()}`);
+        let root = ms[0].panel; for (let i = 0; i < 3 && root.parentElement; i++) root = root.parentElement;
+        ex = compactHTML(root, 15000) + (ex ? '\n\n' + ex : '');
+      } else {
+        const dp = (focus || lp || document).querySelector('.gui-date-picker, .gui-date-range');
+        if (dp) ex = '[날짜칸] ' + compactHTML(dp, 6000) + (ex ? '\n\n' + ex : '');
+      }
     } catch (e) { L.push('화면 요약 중 오류: ' + e.message); }
     L.push('\n## 최근 로그');
     L.push(S.logs.slice(-60).join('\n'));
