@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5.2  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5.3  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.5.2';
+  const VER = '1.5.3';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
@@ -388,9 +388,14 @@
         return bs[bs.length - 1];
       }, i === 0 ? firstWait : nextWait);
       if (!btn) break;
-      const box = btn.closest('[role="dialog"], [role="alertdialog"], .MuiDialog-paper, .swal2-popup, [class*="odal"], [class*="ialog"]') ||
-        (btn.parentElement && btn.parentElement.parentElement);
-      const m = txt(box).replace(/(^|\s)(확인|취소|닫기)(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
+      // 버튼에서 위로 올라가며 메시지 글자가 나올 때까지 찾는다(확인창 문구 기록용)
+      const clean = el => (el ? el.textContent : '').replace(/(^|\s)(확인|취소|닫기)(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
+      let box = btn, m = '';
+      for (let i = 0; i < 8 && box.parentElement; i++) {
+        box = box.parentElement;
+        m = clean(box);
+        if (m.replace(/확인|취소|닫기|\s/g, '').length > 2 || box.matches('.MuiDialog-paper, [role="dialog"]')) break;
+      }
       msgs.push(m);
       log('  └ 알림창: ' + (m || '(내용 없음)') + ' → 확인');
       await realClick(btn);
@@ -610,8 +615,9 @@
     const p = listPanel(); if (!p) return;
     const b = findBtn(p, '조회'); if (!b) return;
     await realClick(b);
-    await sleep(1500);
-    await waitFor(() => listGrid() && renderedRows(listGrid()).length, 6000);
+    await sleep(2000);
+    await waitFor(() => listGrid() && renderedRows(listGrid()).length, 10000);
+    await sleep(500);
   }
 
   const sameTarget = (info, t) => info.dtm.trim() === t.start && norm(info.pgm) === norm(t.pgm);
@@ -821,7 +827,9 @@
     else {
       nativeMsgs.length = 0;
       await realClick(save);
+      log('  저장 버튼 클릭');
       const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 6000 })).concat(nativeMsgs);
+      if (!msgs.length) log('  ⚠ 저장 후 확인창이 뜨지 않았습니다.');
       const err = errIn(msgs);
       if (err) { log('  ❗ 저장 메시지: ' + err); await manual(`저장 중 메시지: ${err}\n화면을 확인해 주세요.`); }
     }
@@ -829,11 +837,16 @@
     // 9) 목록으로 돌아가 검증
     setStep('9 목록 재조회·검증');
     await goList();
-    await refreshList();
-    const chk = (await scanGrid(listGrid(), r => r.cells.broadStrDtm === t.start && norm(r.cells.pgmTitleNm) === norm(t.pgm))).found;
-    const code = chk ? (chk.cells.mainBroadPrdCd || '').trim() : '';
+    let code = '';
+    for (let i = 0; i < 3 && !code; i++) {
+      await refreshList();
+      const chk = (await scanGrid(listGrid(), r => r.cells.broadStrDtm === t.start && norm(r.cells.pgmTitleNm) === norm(t.pgm))).found;
+      code = chk ? (chk.cells.mainBroadPrdCd || '').trim() : '';
+      if (!code) await sleep(1500);
+    }
     if (code) { log(`  ✅ 완료: 목록 상품코드 ${code}`); return 'ok'; }
-    log('  ⚠ 저장 후 목록에 상품코드가 보이지 않습니다. 직접 확인해 주세요.');
+    log('  ⚠ 저장 후 목록을 3번 다시 조회해도 상품코드가 안 보입니다. 저장이 안 됐을 수 있으니 이 편성을 직접 확인해 주세요.');
+    S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '저장 검증 실패', msg: `${t.start} ${t.pgm}` });
     return 'check';
   }
 
