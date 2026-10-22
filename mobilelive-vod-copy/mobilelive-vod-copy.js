@@ -1,8 +1,9 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.2  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.3  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
+ *   0) 아이템 편성 > 모바일라이브 탭에서 방송일자(오늘~30일 뒤)·프로그램명(와니)을 넣고 조회한다.
  *   1) 목록에서 프로그램명에 [VOD]가 있고 상품코드가 비어 있는 편성을 찾는다.
  *   2) 각 편성의 상품코드 칸을 더블클릭해 상품 편성 화면으로 이동하고, 방송일시/프로그램명이 맞는지 확인한다.
  *      (틀리면 방송일시 캘린더 > 프로그램 조회 팝업에서 해당 편성을 찾아 들어간다.)
@@ -14,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.2';
+  const VER = '1.3';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 같은 버전이 이미 떠 있으면 다시 보여주기만, 다른(옛) 버전이면 지우고 새로 띄운다(깃헙 자동 업데이트 대응)
@@ -89,6 +90,7 @@
     const k = Object.keys(el).find(x => x.startsWith('__reactProps$'));
     return k ? el[k] : null;
   }
+  const execCmd = (c, u, v) => { try { return document.execCommand(c, u, v); } catch (e) { return false; } };
   const fakeEv = (el, type) => ({ target: el, currentTarget: el, type, nativeEvent: new Event(type), bubbles: true,
     preventDefault() {}, stopPropagation() {}, persist() {}, isDefaultPrevented: () => false, isPropagationStopped: () => false });
   const DATE_WAYS = {
@@ -105,8 +107,8 @@
     '키보드 입력': async (el, v) => {
       el.focus(); el.click(); await sleep(100);
       el.select && el.select();
-      document.execCommand('selectAll', false, null);
-      document.execCommand('insertText', false, v);
+      execCmd('selectAll', false, null);
+      execCmd('insertText', false, v);
       el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
       el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
       await sleep(150);
@@ -115,15 +117,15 @@
     },
     '한 글자씩 입력': async (el, v) => {
       el.focus(); el.select && el.select();
-      document.execCommand('delete', false, null);
+      execCmd('delete', false, null);
       for (const ch of v.replace(/-/g, '')) {
         el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
-        document.execCommand('insertText', false, ch);
+        execCmd('insertText', false, ch);
         el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
         await sleep(30);
       }
       if (el.value.replace(/\D/g, '') === v.replace(/\D/g, '') && el.value !== v) { /* 마스크 입력이면 하이픈 자동 */ }
-      else if (el.value !== v) { el.select && el.select(); document.execCommand('insertText', false, v); }
+      else if (el.value !== v) { el.select && el.select(); execCmd('insertText', false, v); }
       el.blur(); el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
       await sleep(250);
     }
@@ -140,8 +142,9 @@
       }
       const now = getInputs().map(e => e.value).join(' ~ ');
       const q = findBtn(scope(), '조회'); if (q) await realClick(q);
-      if (await waitFor(ok, 4000)) { log(`  날짜 입력 성공(${way}): ${now}`); return true; }
-      log(`  날짜 입력 시도 실패(${way}): 화면값 ${now}`);
+      await sleep(1200);
+      if (await waitFor(ok, 4000)) { log(`  입력 성공(${way}): ${now}`); return true; }
+      log(`  입력 시도 실패(${way}): 화면값 ${now}`);
       S.dateTries = (S.dateTries || []).concat(`${S.step}: ${way} → ${now}`);
     }
     return false;
@@ -305,6 +308,7 @@
 #${PANEL_ID} .t label{display:flex;gap:6px;padding:4px 8px;border-bottom:1px solid #f0f0f0;cursor:pointer}
 #${PANEL_ID} .t label small{color:#888}
 #${PANEL_ID} .row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+#${PANEL_ID} input:not([type]){border:1px solid #bbb;border-radius:4px;padding:2px 4px;font:inherit}
 #${PANEL_ID} .btn{padding:5px 10px;border:1px solid #1e6fe8;background:#fff;color:#1e6fe8;border-radius:5px;cursor:pointer;font:inherit}
 #${PANEL_ID} .btn.p{background:#1e6fe8;color:#fff}
 #${PANEL_ID} .btn.r{border-color:#d33;color:#d33}
@@ -317,7 +321,8 @@
   P.innerHTML = `
 <div class="h"><span>모바일라이브 VOD 편성상품 복사 v${VER}</span><button data-a="close" title="닫기">✕</button></div>
 <div class="b">
-  <div class="row"><button class="btn" data-a="scan">대상 다시 찾기</button><button class="btn" data-a="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button><span data-r="cnt" style="align-self:center;color:#555"></span></div>
+  <div class="row" style="align-items:center">방송일자 <input data-r="sd" size="10" style="width:92px"> ~ <input data-r="ed" size="10" style="width:92px"> 프로그램명 <input data-r="kw" style="width:60px"></div>
+  <div class="row"><button class="btn p" data-a="search">조회 + 대상 찾기</button><button class="btn" data-a="scan">대상 다시 찾기</button><button class="btn" data-a="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button><span data-r="cnt" style="align-self:center;color:#555"></span></div>
   <div class="t" data-r="list"></div>
   <label style="display:block;margin:4px 0"><input type="checkbox" data-r="auto"> 저장 전 확인 없이 자동 저장 (익숙해진 뒤 사용)</label>
   <div class="row"><button class="btn p" data-a="run">선택 항목 실행</button><button class="btn r" data-a="stop" disabled>중지</button></div>
@@ -394,6 +399,57 @@
     $('[data-r="cnt"]').textContent = `[VOD] 상품 빈 편성 ${S.targets.length}건`;
     if (!S.targets.length) L.innerHTML = '<div style="padding:8px;color:#888">대상 없음</div>';
   }
+  // ---------- 0) 방송일자·프로그램명 세팅 후 조회 ----------
+  const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const dayOff = n => { const d = new Date(); d.setDate(d.getDate() + n); return ymd(d); };
+  const LS_KEY = '__mlcopy_settings';
+  function loadSettings() {
+    let o = {};
+    try { o = JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {}; } catch (e) { o = {}; }
+    $('[data-r="sd"]').value = dayOff(0);
+    $('[data-r="ed"]').value = dayOff(o.days != null ? o.days : 30);
+    $('[data-r="kw"]').value = o.kw || '와니';
+  }
+  function saveSettings() {
+    const sd = new Date($('[data-r="sd"]').value), ed = new Date($('[data-r="ed"]').value);
+    const days = Math.round((ed - sd) / 86400000);
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ kw: $('[data-r="kw"]').value.trim(), days: isNaN(days) ? 30 : days })); } catch (e) { /* 저장 불가 무시 */ }
+  }
+  async function searchList() {
+    setStep('0 아이템 편성 조회');
+    const sd = $('[data-r="sd"]').value.trim(), ed = $('[data-r="ed"]').value.trim(), kw = $('[data-r="kw"]').value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(sd) || !/^\d{4}-\d{2}-\d{2}$/.test(ed)) { log('❗ 방송일자를 YYYY-MM-DD 형식으로 넣어주세요.'); return false; }
+    saveSettings();
+    if (!(await goList(true))) { log('❗ 아이템 편성 > 모바일라이브 화면을 찾지 못했습니다. 그 화면을 연 뒤 [조회 + 대상 찾기]를 눌러주세요.'); return false; }
+    log(`조회: ${sd} ~ ${ed} / 프로그램명 "${kw}"`);
+    const getIns = () => {
+      const p = listPanel(); if (!p) return [];
+      const a = p.querySelector('input[name="startDate"]'), b = p.querySelector('input[name="endDate"]');
+      const k = p.querySelector('input[placeholder*="프로그램명"]') || fieldInput(p, '프로그램명');
+      return [a, b, k];
+    };
+    const ins = getIns();
+    if (ins.some(x => !x)) { log('❗ 조회 조건 입력칸을 찾지 못했습니다. [진단 내용 복사]로 알려주세요.'); S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '입력칸 없음', msg: '방송일자/프로그램명 input' }); return false; }
+    const ok = () => {
+      const [a, b, k] = getIns();
+      if (!a || a.value !== sd || b.value !== ed || norm(k.value) !== norm(kw)) return false;
+      const g = listGrid(); if (!g) return false;
+      const rows = renderedRows(g);
+      return rows.every(r => { const d = (r.cells.broadStrDtm || '').slice(0, 10); return d >= sd && d <= ed && (!kw || norm(r.cells.pgmTitleNm).includes(norm(kw))); });
+    };
+    const done = await setDatesAndQuery(listPanel, () => getIns().filter(Boolean), [sd, ed, kw], ok);
+    if (!done) { log('❗ 조회 조건이 화면에 반영되지 않았습니다. [진단 내용 복사]로 알려주세요.'); S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '조회 조건 반영 실패', msg: `${sd}~${ed} ${kw}` }); return false; }
+    await waitFor(() => listGrid() && renderedRows(listGrid()).length, 3000);
+    return true;
+  }
+  async function searchAndScan() {
+    if (S.running) return;
+    $('[data-a="search"]').disabled = true;
+    try { if (await searchList()) await doScan(); }
+    catch (e) { if (e !== STOP) { log('❌ ' + e.message); S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '조회 오류', msg: e.message }); } }
+    finally { $('[data-a="search"]').disabled = false; S.stop = false; setStep('대기'); }
+  }
+
   async function doScan() {
     log('목록에서 [VOD] + 상품코드 빈 편성 찾는 중…');
     S.targets = await scanTargets();
@@ -402,14 +458,22 @@
   }
 
   // ---------- 단계 ----------
-  async function goList() {
-    if (listPanel()) return true;
+  // 아이템 편성 화면의 모바일라이브 탭이 선택돼 있는지 확인하고 아니면 누른다
+  async function ensureMobileTab() {
+    const tabs = [...document.querySelectorAll('[role="tab"], button')].filter(b => !inPanel(b) && norm(b.textContent) === '모바일라이브' && vis(b));
+    const lp = listPanel();
+    const tab = tabs.find(b => lp && lp.contains(b)) || tabs[0];
+    if (tab && tab.getAttribute('aria-selected') === 'false') { await realClick(tab); await sleep(800); }
+  }
+  async function goList(quiet) {
+    if (listPanel()) { await ensureMobileTab(); return true; }
     const cands = [...document.querySelectorAll('body *')].filter(e =>
       !inPanel(e) && norm(e.textContent) === '아이템편성' && ![...e.children].some(c => norm(c.textContent) === '아이템편성') && vis(e));
     const bottom = cands.filter(e => e.getBoundingClientRect().top > window.innerHeight * 0.6);
     const el = (bottom.length ? bottom : cands).pop();
     if (el) await realClick(el);
-    if (await waitFor(listPanel, 5000)) return true;
+    if (await waitFor(listPanel, 5000)) { await ensureMobileTab(); return true; }
+    if (quiet) return false;
     await manual('하단 탭에서 [아이템 편성] > 모바일라이브 목록 화면으로 이동해 주세요.');
     return !!listPanel();
   }
@@ -605,7 +669,7 @@
     const list = idx.map(i => S.targets[i]);
     if (!list.length) { log('선택된 대상이 없습니다.'); return; }
     S.running = true; S.stop = false; S.autoSave = $('[data-r="auto"]').checked;
-    $('[data-a="run"]').disabled = true; $('[data-a="scan"]').disabled = true; $('[data-a="stop"]').disabled = false;
+    $('[data-a="run"]').disabled = true; $('[data-a="scan"]').disabled = true; $('[data-a="search"]').disabled = true; $('[data-a="stop"]').disabled = false;
     patchNative(true);
     const res = { ok: [], skip: [], check: [], fail: [] };
     try {
@@ -628,7 +692,7 @@
     } finally {
       patchNative(false);
       S.running = false; S.cur = null; setStep('대기');
-      $('[data-a="run"]').disabled = false; $('[data-a="scan"]').disabled = false; $('[data-a="stop"]').disabled = true;
+      $('[data-a="run"]').disabled = false; $('[data-a="scan"]').disabled = false; $('[data-a="search"]').disabled = false; $('[data-a="stop"]').disabled = true;
       log(`=== 결과: 완료 ${res.ok.length} · 확인필요 ${res.check.length} · 건너뜀 ${res.skip.length} · 오류 ${res.fail.length}`);
       res.check.concat(res.fail).forEach(t => log(`   확인: ${t.start} ${t.pgm}`));
       if (listPanel()) await doScan().catch(() => {});
@@ -713,7 +777,7 @@
       const ta = document.createElement('textarea');
       ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
       document.body.appendChild(ta); ta.select();
-      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      try { ok = execCmd('copy'); } catch (e) { ok = false; }
       ta.remove();
     }
     console.log(text);
@@ -725,13 +789,15 @@
     const act = a.dataset.a;
     if (act === 'close') { if (S.running) { S.stop = true; S.cancelAsk && S.cancelAsk(); } P.style.display = 'none'; }
     if (act === 'scan') doScan();
+    if (act === 'search') searchAndScan();
     if (act === 'diag') copyDiag();
     if (act === 'run') run();
     if (act === 'stop') { S.stop = true; S.cancelAsk && S.cancelAsk(); log('중지 요청…'); }
   });
   $('[data-r="auto"]').addEventListener('change', e => { S.autoSave = e.target.checked; });
 
-  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) doScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER, running: () => S.running };
+  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) searchAndScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER, running: () => S.running };
   log(`v${VER} 시작. 대상 확인 후 [선택 항목 실행]을 누르세요.`);
-  await doScan();
+  loadSettings();
+  await searchAndScan();
 })();
