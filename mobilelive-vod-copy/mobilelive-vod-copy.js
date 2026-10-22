@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5.3  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.6  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.5.3';
+  const VER = '1.6';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
@@ -682,6 +682,22 @@
     return { found: null, all: [...all.values()] };
   }
 
+  const saveBtns = p => p ? [...p.querySelectorAll('button')].filter(b => !inPanel(b) && norm(b.textContent) === '저장' && vis(b)) : [];
+  function prodSaveBtn(p) {
+    const all = saveBtns(p);
+    if (!all.length) return null;
+    const hist = p && [...p.querySelectorAll('button')].find(b => norm(b.textContent) === '상품편성이력조회' && vis(b));
+    if (hist) {
+      // 이력조회 버튼 바로 뒤에 오는 저장 버튼
+      const after = all.find(b => hist.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      if (after) return after;
+    }
+    const g = prodGrid(p);
+    const lot = [...p.querySelectorAll('*')].find(e => isLeaf(e) && norm(e.textContent) === '추첨내용');
+    if (lot) { const before = all.filter(b => lot.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING); if (before.length) return before[before.length - 1]; }
+    return g ? all.find(b => g.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) || all[0] : all[0];
+  }
+
   async function processOne(t) {
     S.cur = t;
     log(`▶ ${t.start} ${t.pgm}`);
@@ -822,7 +838,9 @@
       if (a.startsWith('이 건')) { log('  저장하지 않고 건너뜀 (화면에 복사된 내용은 저장 전 상태로 남아 있습니다)'); return 'skip'; }
       if (a === '이후 모두 자동 저장') { S.autoSave = true; $('[data-r="auto"]').checked = true; }
     }
-    const save = findBtn(prodPanel(), '저장');
+    // 상품 편성 화면에는 [저장]이 두 개: 방송상품 편성용(상품편성 이력조회 옆)과 아래 추첨내용(경품)용. 방송상품용을 누른다.
+    const save = prodSaveBtn(prodPanel());
+    if (save) log(`  방송상품 [저장] 버튼 사용 (화면의 저장 버튼 ${saveBtns(prodPanel()).length}개 중)`);
     if (!save) { await manual('[저장] 버튼을 눌러 주세요.'); }
     else {
       nativeMsgs.length = 0;
