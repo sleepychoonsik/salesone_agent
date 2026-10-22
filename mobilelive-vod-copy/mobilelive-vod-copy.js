@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.4.2  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.4.2';
+  const VER = '1.5';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 같은 버전이 이미 떠 있으면 다시 보여주기만, 다른(옛) 버전이면 지우고 새로 띄운다(깃헙 자동 업데이트 대응)
@@ -341,7 +341,13 @@
     const heads = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div,strong')]
       .filter(e => !inPanel(e) && !e.closest('button') && norm(e.textContent) === T &&
         ![...e.children].some(ch => norm(ch.textContent) === T) && vis(e));
+    // 세일즈원 팝업은 MUI Dialog(#root 밖, role=dialog)로 뜸 → 그 안의 것만 쓴다
+    for (const h of heads.slice().reverse()) {
+      const d = h.closest('.MuiDialog-paper, [role="dialog"], [role="presentation"] .MuiPaper-root');
+      if (d && vis(d) && !d.contains(document.getElementById('root'))) return d;
+    }
     for (const h of heads.reverse()) {
+      if (document.getElementById('root') && document.getElementById('root').contains(h) && document.getElementById('root').getAttribute('aria-hidden') === 'true') continue;
       let n = h;
       for (let i = 0; i < 12 && n; i++) {
         n = n.parentElement;
@@ -603,19 +609,51 @@
     if (!dlg) return false;
     const day = t.start.slice(0, 10);
     const curDlg = () => dialogByTitle('프로그램 조회') || dlg;
-    const okDay = () => { const gg = gridsIn(curDlg())[0]; return gg && renderedRows(gg).some(r => Object.values(r.cells).some(v => v.startsWith(day))) && gg; };
-    if (!okDay()) await setDatesAndQuery(curDlg, () => [fieldInput(curDlg(), '방송일자')].filter(Boolean), [day], okDay);
-    const g = okDay();
-    if (!g) return false;
-    const cD = colOf(g, '방송일시'), cP = colOf(g, '프로그램명');
-    const { found } = await scanGrid(g, r => r.cells[cD] === t.start && norm(r.cells[cP]) === norm(t.pgm));
-    if (!found) return false;
-    await realClick(found.tds[cD]);
+    const okDay = () => { const rs = popupRowsNow(curDlg()); return rs.length > 0 && rs.every(r => r.dtm.startsWith(day)); };
+    if (!okDay()) await setDatesAndQuery(curDlg, () => [fieldInput(curDlg(), '방송일자') || curDlg().querySelector('input[name="startDate"]')].filter(Boolean), [day], okDay);
+    const match = r => r.dtm === t.start && norm(r.name) === norm(t.pgm);
+    const { found } = await popupRows(curDlg(), match);
+    if (!found) { log(`  프로그램 조회 팝업에서 ${t.start} ${t.pgm}을(를) 찾지 못했습니다.`); return false; }
+    await realClick(found.el);
     if (!(await waitFor(() => !dialogByTitle('프로그램 조회'), 1500))) {
-      const again = (await scanGrid(g, r => r.cells[cD] === t.start && norm(r.cells[cP]) === norm(t.pgm))).found;
-      if (again) await realDblClick(again.tds[cD]);
+      const again = (await popupRows(curDlg(), match)).found;
+      if (again) await realDblClick(again.el);
     }
     return !!(await waitFor(() => { const pp = prodPanel(); return pp && sameTarget(prodInfo(pp), t); }, 6000));
+  }
+
+  // 팝업 목록 행 읽기: TOAST 그리드면 그대로, 아니면 'YYYY-MM-DD HH:MM' 칸을 기준으로 행을 찾는다
+  const DTM_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+  function popupRowsNow(dlg) {
+    const g = gridsIn(dlg)[0];
+    if (g) {
+      const cD = colOf(g, '방송일시'), cP = colOf(g, '프로그램명', '프로그램 명');
+      return renderedRows(g).map(r => ({ key: 'g' + r.key, dtm: (r.cells[cD] || '').trim(), name: r.cells[cP] || '', el: r.tds[cD] }));
+    }
+    const leafs = [...dlg.querySelectorAll('*')].filter(e => !e.closest('input') && DTM_RE.test(e.textContent.trim()) && isLeaf(e) && vis(e));
+    return leafs.map(e => {
+      let row = e;
+      while (row.parentElement && row.parentElement !== dlg &&
+        [...row.parentElement.querySelectorAll('*')].filter(x => DTM_RE.test(x.textContent.trim()) && isLeaf(x)).length === 1) row = row.parentElement;
+      const texts = [...row.querySelectorAll('*')].filter(x => isLeaf(x) && x.textContent.trim()).map(x => x.textContent.trim());
+      const i = texts.indexOf(e.textContent.trim());
+      const name = texts.slice(i + 1).find(x => !DTM_RE.test(x)) || '';
+      return { key: e.textContent.trim() + '|' + name, dtm: e.textContent.trim(), name, el: e };
+    });
+  }
+  async function popupRows(dlg, pred) {
+    const all = new Map();
+    const g = gridsIn(dlg)[0];
+    const sc = g ? g.querySelector('.tui-grid-rside-area .tui-grid-body-area')
+      : [...dlg.querySelectorAll('*')].find(e => e.scrollHeight > e.clientHeight + 5 && /auto|scroll/.test(getComputedStyle(e).overflowY) && DTM_RE.test((e.textContent.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/) || [''])[0]));
+    if (sc && sc.scrollTop > 0) { sc.scrollTop = 0; await sleep(250); }
+    for (let guard = 0; guard < 300; guard++) {
+      for (const r of popupRowsNow(dlg)) { all.set(r.key, r); if (pred && pred(r)) return { found: r, all: [...all.values()] }; }
+      if (!sc || sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2) break;
+      sc.scrollTop += Math.max(28, sc.clientHeight - 30);
+      await sleep(250);
+    }
+    return { found: null, all: [...all.values()] };
   }
 
   async function processOne(t) {
@@ -664,47 +702,48 @@
 
     const { date, time } = t.orig;
     const want = `${date} ${time}`;
-    let sIn = dlg.querySelector('input[name="startDate"]'), eIn = dlg.querySelector('input[name="endDate"]');
-    if (!sIn || !eIn) {
-      const ds = [...dlg.querySelectorAll('input')].filter(i => /^\d{4}-\d{2}-\d{2}$/.test(i.value));
-      sIn = sIn || ds[0]; eIn = eIn || ds[1];
-    }
     const curDlg = () => dialogByTitle('편성상품 복사') || dlg;
     const getDates = () => {
       const d = curDlg();
       let a = d.querySelector('input[name="startDate"]'), b = d.querySelector('input[name="endDate"]');
       if (!a || !b) {
-        const ds = [...d.querySelectorAll('input')].filter(i => /^\d{4}[-./]\d{2}[-./]\d{2}$/.test(i.value) || /일자|date/i.test((i.name || '') + (i.placeholder || '')));
+        const ds = [...d.querySelectorAll('input')].filter(i => /^\d{4}[-./]\d{2}[-./]\d{2}$/.test(i.value));
         a = a || ds[0]; b = b || ds[1];
       }
       return [a, b].filter(Boolean);
     };
-    const hasDate = () => { const gg = gridsIn(curDlg())[0]; return gg && renderedRows(gg).some(r => Object.values(r.cells).some(v => v.startsWith(date))) && gg; };
-    let cg = hasDate() || (await setDatesAndQuery(curDlg, getDates, [date, date], hasDate) && hasDate());
-    if (!cg) { await manual(`팝업의 방송일자를 ${date} ~ ${date} 로 맞추고 [조회]를 눌러주세요.`); cg = hasDate(); if (!cg) return 'skip'; }
+    log(`  팝업 방송일자: ${getDates().map(e => e.value).join(' ~ ')} → ${date} ~ ${date}`);
+    const onlyDate = () => { const rs = popupRowsNow(curDlg()); return rs.length > 0 && rs.every(r => r.dtm.startsWith(date)); };
+    let okDates = onlyDate() || await setDatesAndQuery(curDlg, getDates, [date, date], onlyDate);
+    if (!okDates) {
+      // 기본 조회 기간(한 달)에 원방송 날짜가 들어 있으면 그대로 진행
+      const d0 = getDates().map(e => e.value);
+      if (d0.length === 2 && d0[0] <= date && date <= d0[1]) { log('  날짜를 못 바꿨지만 현재 조회 기간에 원방송 날짜가 포함돼 그대로 찾습니다.'); okDates = true; }
+    }
+    if (!okDates) { await manual(`팝업의 방송일자를 ${date} ~ ${date} 로 맞추고 [조회]를 눌러주세요.`); }
 
     // 5) 원방송 편성 고르기
     setStep('5 원방송 편성 선택');
-    const cD = colOf(cg, '방송일시'), cP = colOf(cg, '프로그램명', '프로그램 명');
-    const { all } = await scanGrid(cg);
-    const atTime = all.filter(r => (r.cells[cD] || '').trim() === want);
-    let cand = atTime.filter(r => brandMatch(r.cells[cP] || '', t.brand));
-    if (cand.length > 1) { const live = cand.filter(r => !/VOD/i.test(r.cells[cP] || '')); if (live.length) cand = live; }
+    const { all } = await popupRows(curDlg());
+    const atTime = all.filter(r => r.dtm === want);
+    let cand = atTime.filter(r => brandMatch(r.name, t.brand));
+    if (cand.length > 1) { const live = cand.filter(r => !/VOD/i.test(r.name)); if (live.length) cand = live; }
     let srcName = '';
     if (cand.length === 1) {
-      srcName = cand[0].cells[cP];
-      const fresh = (await scanGrid(cg, r => r.key === cand[0].key)).found;
-      await realClick(fresh.tds[cD]);
+      srcName = cand[0].name;
+      const fresh = (await popupRows(curDlg(), r => r.key === cand[0].key)).found || cand[0];
+      await realClick(fresh.el);
       log(`  원본 선택: ${want} ${srcName}`);
     } else {
-      const names = atTime.map(r => ' - ' + r.cells[cP]).join('\n') || ' (해당 시간 편성 없음)';
+      const names = atTime.map(r => ' - ' + r.name).join('\n') || ' (해당 시간 편성 없음)';
+      log(`  ${want} 후보 ${atTime.length}건 / 팝업 행 ${all.length}건`);
       await manual(`${want} 원본 편성을 자동으로 고르지 못했습니다(${BRAND_LABEL[t.brand]} 포함 ${cand.length}건).\n${names}\n팝업에서 원본 편성을 클릭해 선택해 주세요.`);
       srcName = '(직접 선택)';
     }
 
     // 6) 편성 상품 적용 → 확인
     setStep('6 편성 상품 적용·확인');
-    const apply = findBtn(dlg, '편성 상품 적용') || findBtn(document, '편성 상품 적용');
+    const apply = findBtn(curDlg(), '편성 상품 적용') || findBtn(document, '편성 상품 적용');
     if (!apply) { await manual('[편성 상품 적용] 버튼을 눌러 주세요.'); }
     else {
       nativeMsgs.length = 0;
@@ -907,7 +946,7 @@
   });
   $('[data-r="auto"]').addEventListener('change', e => { S.autoSave = e.target.checked; });
 
-  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) searchAndScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER, running: () => S.running };
+  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) searchAndScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER, running: () => S.running, _dbg: { dialogByTitle, popupRows, popupRowsNow, pickByCalendar } };
   log(`v${VER} 시작. 대상 확인 후 [선택 항목 실행]을 누르세요.`);
   loadSettings();
   await searchAndScan();
