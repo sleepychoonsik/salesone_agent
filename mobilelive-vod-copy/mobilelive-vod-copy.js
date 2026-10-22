@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.0
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.1  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -10,14 +10,17 @@
  *      같은 시간에 여러 개면 브랜드명(와니/AM)이 들어간 편성을 골라 편성 상품 적용 > 확인.
  *   4) 1번 상품 주력상품 체크 > (확인 후) 저장 > 확인, 목록으로 돌아가 상품코드가 채워졌는지 검증.
  * 저장 전에는 기본적으로 한 건씩 확인을 받는다. 자동화가 화면을 못 찾으면 멈추고 직접 처리 후 [계속]을 누르게 한다.
+ * 문제가 생기면 패널의 [진단 내용 복사]로 버전·단계·오류·URL·화면 요약을 클립보드에 담아 Claude에게 붙여넣는다.
  */
 (async () => {
   'use strict';
   if (window.__MLCOPY && window.__MLCOPY.show) { window.__MLCOPY.show(); return; }
 
-  const VER = '1.0';
+  const VER = '1.1';
+  const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
-  const S = { stop: false, running: false, autoSave: false, targets: [] };
+  const S = { stop: false, running: false, autoSave: false, targets: [], step: '대기', cur: null, errors: [], logs: [] };
+  const setStep = name => { S.step = name; };
 
   // ---------- 공통 유틸 ----------
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -74,6 +77,69 @@
     el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     await sleep(300);
     return el.value === v;
+  }
+
+  // 날짜 입력은 화면 컴포넌트마다 반응 방식이 달라 여러 방법을 차례로 시도한다.
+  function reactProps(el) {
+    const k = Object.keys(el).find(x => x.startsWith('__reactProps$'));
+    return k ? el[k] : null;
+  }
+  const fakeEv = (el, type) => ({ target: el, currentTarget: el, type, nativeEvent: new Event(type), bubbles: true,
+    preventDefault() {}, stopPropagation() {}, persist() {}, isDefaultPrevented: () => false, isPropagationStopped: () => false });
+  const DATE_WAYS = {
+    '값 직접 설정': async (el, v) => { await setInput(el, v); },
+    'React onChange 호출': async (el, v) => {
+      const pr = reactProps(el); if (!pr) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+      pr.onFocus && pr.onFocus(fakeEv(el, 'focus'));
+      pr.onChange && pr.onChange(fakeEv(el, 'change'));
+      await sleep(150);
+      pr.onBlur && pr.onBlur(fakeEv(el, 'blur'));
+      await sleep(250);
+    },
+    '키보드 입력': async (el, v) => {
+      el.focus(); el.click(); await sleep(100);
+      el.select && el.select();
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertText', false, v);
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      await sleep(150);
+      el.blur(); el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      await sleep(250);
+    },
+    '한 글자씩 입력': async (el, v) => {
+      el.focus(); el.select && el.select();
+      document.execCommand('delete', false, null);
+      for (const ch of v.replace(/-/g, '')) {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+        document.execCommand('insertText', false, ch);
+        el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+        await sleep(30);
+      }
+      if (el.value.replace(/\D/g, '') === v.replace(/\D/g, '') && el.value !== v) { /* 마스크 입력이면 하이픈 자동 */ }
+      else if (el.value !== v) { el.select && el.select(); document.execCommand('insertText', false, v); }
+      el.blur(); el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      await sleep(250);
+    }
+  };
+  // getInputs(): 현재 화면의 날짜 input 배열, values: 넣을 값 배열, ok(): 조회 결과가 맞는지
+  async function setDatesAndQuery(scope, getInputs, values, ok) {
+    for (const [way, fn] of Object.entries(DATE_WAYS)) {
+      if (S.stop) throw STOP;
+      const ins = getInputs();
+      if (!ins.length) return false;
+      for (let i = 0; i < ins.length; i++) {
+        const el = getInputs()[i] || ins[i];
+        if (el) await fn(el, values[i] != null ? values[i] : values[0]);
+      }
+      const now = getInputs().map(e => e.value).join(' ~ ');
+      const q = findBtn(scope(), '조회'); if (q) await realClick(q);
+      if (await waitFor(ok, 4000)) { log(`  날짜 입력 성공(${way}): ${now}`); return true; }
+      log(`  날짜 입력 시도 실패(${way}): 화면값 ${now}`);
+      S.dateTries = (S.dateTries || []).concat(`${S.step}: ${way} → ${now}`);
+    }
+    return false;
   }
 
   function findBtn(scope, label) {
@@ -246,7 +312,7 @@
   P.innerHTML = `
 <div class="h"><span>모바일라이브 VOD 편성상품 복사 v${VER}</span><button data-a="close" title="닫기">✕</button></div>
 <div class="b">
-  <div class="row"><button class="btn" data-a="scan">대상 다시 찾기</button><span data-r="cnt" style="align-self:center;color:#555"></span></div>
+  <div class="row"><button class="btn" data-a="scan">대상 다시 찾기</button><button class="btn" data-a="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button><span data-r="cnt" style="align-self:center;color:#555"></span></div>
   <div class="t" data-r="list"></div>
   <label style="display:block;margin:4px 0"><input type="checkbox" data-r="auto"> 저장 전 확인 없이 자동 저장 (익숙해진 뒤 사용)</label>
   <div class="row"><button class="btn p" data-a="run">선택 항목 실행</button><button class="btn r" data-a="stop" disabled>중지</button></div>
@@ -259,6 +325,7 @@
   function log(m) {
     const t = new Date().toTimeString().slice(0, 8);
     logBox.textContent += `[${t}] ${m}\n`;
+    S.logs.push(`[${t}] ${m}`); if (S.logs.length > 300) S.logs.shift();
     logBox.scrollTop = logBox.scrollHeight;
     console.log('[VOD복사] ' + m);
   }
@@ -272,7 +339,10 @@
         const b = document.createElement('button');
         b.className = 'btn' + (i === 0 ? ' p' : '');
         b.textContent = l;
-        b.onclick = () => { box.style.display = 'none'; res(l); };
+        b.onclick = () => {
+          if (l === '진단 내용 복사') { copyDiag(); return; }
+          box.style.display = 'none'; res(l);
+        };
         btns.appendChild(b);
       });
       S.cancelAsk = () => { box.style.display = 'none'; res('중지'); };
@@ -281,7 +351,8 @@
   // 자동화가 못 하는 단계: 사용자가 직접 처리 후 계속
   async function manual(msg) {
     log('⏸ ' + msg.split('\n')[0]);
-    const a = await ask('⏸ ' + msg + '\n\n직접 처리한 뒤 [계속]을 눌러주세요.', ['계속', '이 건 건너뛰기', '중지']);
+    S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '자동화 멈춤', msg });
+    const a = await ask('⏸ ' + msg + '\n\n직접 처리한 뒤 [계속]을 눌러주세요. 자주 멈추면 [진단 내용 복사]를 눌러 Claude에게 보내주세요.', ['계속', '이 건 건너뛰기', '중지', '진단 내용 복사']);
     if (a === '중지') throw STOP;
     if (a === '이 건 건너뛰기') throw new Error('SKIP');
   }
@@ -349,6 +420,7 @@
   const sameTarget = (info, t) => info.dtm.trim() === t.start && norm(info.pgm) === norm(t.pgm);
 
   async function openViaProgramPopup(t) {
+    setStep('2-1 프로그램 조회 팝업으로 재진입');
     const p = prodPanel(); if (!p) return false;
     log('  프로그램명이 달라 방송일시 캘린더 > 프로그램 조회로 다시 찾습니다.');
     const inp = fieldInput(p, '방송일시'); if (!inp) return false;
@@ -359,10 +431,10 @@
     if (!dlg && cal) { await realClick(inp); dlg = await waitFor(() => dialogByTitle('프로그램 조회'), 3000); }
     if (!dlg) return false;
     const day = t.start.slice(0, 10);
-    const dIn = fieldInput(dlg, '방송일자');
-    if (dIn && dIn.value !== day) await setInput(dIn, day);
-    const q = findBtn(dlg, '조회'); if (q) await realClick(q);
-    const g = await waitFor(() => { const gg = gridsIn(dlg)[0]; return gg && renderedRows(gg).some(r => Object.values(r.cells).some(v => v.startsWith(day))) && gg; }, 6000);
+    const curDlg = () => dialogByTitle('프로그램 조회') || dlg;
+    const okDay = () => { const gg = gridsIn(curDlg())[0]; return gg && renderedRows(gg).some(r => Object.values(r.cells).some(v => v.startsWith(day))) && gg; };
+    if (!okDay()) await setDatesAndQuery(curDlg, () => [fieldInput(curDlg(), '방송일자')].filter(Boolean), [day], okDay);
+    const g = okDay();
     if (!g) return false;
     const cD = colOf(g, '방송일시'), cP = colOf(g, '프로그램명');
     const { found } = await scanGrid(g, r => r.cells[cD] === t.start && norm(r.cells[cP]) === norm(t.pgm));
@@ -376,15 +448,23 @@
   }
 
   async function processOne(t) {
+    S.cur = t;
     log(`▶ ${t.start} ${t.pgm}`);
     // 1) 목록에서 행 찾기
+    setStep('1 목록에서 대상 행 찾기');
     await goList();
-    const g = listGrid();
-    const { found } = await scanGrid(g, r => r.cells.broadStrDtm === t.start && norm(r.cells.pgmTitleNm) === norm(t.pgm));
-    if (!found) { log('  목록에서 행을 찾지 못해 건너뜁니다.'); return 'skip'; }
+    const g = await waitFor(() => { const gg = listGrid(); return gg && renderedRows(gg).length && gg; }, 6000);
+    if (!g) { await manual('아이템 편성 목록이 비어 있습니다. 조회 후 [계속]을 눌러주세요.'); }
+    const { found, all: seen } = await scanGrid(listGrid(), r => r.cells.broadStrDtm === t.start && norm(r.cells.pgmTitleNm) === norm(t.pgm));
+    if (!found) {
+      log(`  목록에서 행을 찾지 못해 건너뜁니다. (목록 ${seen.length}행: ${seen.slice(0, 3).map(r => r.cells.broadStrDtm + ' ' + r.cells.pgmTitleNm).join(' / ')}…)`);
+      S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '대상 행 없음', msg: `${t.start} ${t.pgm} / 목록 ${seen.length}행` });
+      return 'skip';
+    }
     if ((found.cells.mainBroadPrdCd || '').trim()) { log('  이미 상품이 있어 건너뜁니다.'); return 'skip'; }
 
     // 2) 상품코드 칸 더블클릭 → 상품 편성
+    setStep('2 상품코드 더블클릭→상품 편성 진입');
     await realDblClick(found.tds.mainBroadPrdCd);
     let p = await waitFor(() => { const pp = prodPanel(); return pp && sameTarget(prodInfo(pp), t) && pp; }, 7000);
     if (!p && prodPanel()) {
@@ -400,10 +480,12 @@
     log('  상품 편성 화면 진입 확인');
 
     // 3) 이미 상품이 있으면 중복 복사 방지
+    setStep('3 기존 방송상품 확인');
     let pg = prodGrid(p);
     if (pg && renderedRows(pg).length) { log('  이 편성에는 이미 방송상품이 있어 건너뜁니다.'); return 'skip'; }
 
     // 4) 편성상품 복사 팝업
+    setStep('4 편성상품 복사 팝업 조회');
     const copyBtn = findBtn(p, '편성상품 복사');
     if (copyBtn) await realClick(copyBtn);
     let dlg = await waitFor(() => dialogByTitle('편성상품 복사'), 5000);
@@ -416,14 +498,22 @@
       const ds = [...dlg.querySelectorAll('input')].filter(i => /^\d{4}-\d{2}-\d{2}$/.test(i.value));
       sIn = sIn || ds[0]; eIn = eIn || ds[1];
     }
-    if (sIn) await setInput(sIn, date);
-    if (eIn) await setInput(eIn, date);
-    const q = findBtn(dlg, '조회'); if (q) await realClick(q);
-    const hasDate = () => { const gg = gridsIn(dlg)[0]; return gg && renderedRows(gg).some(r => Object.values(r.cells).some(v => v.startsWith(date))) && gg; };
-    let cg = await waitFor(hasDate, 6000);
+    const curDlg = () => dialogByTitle('편성상품 복사') || dlg;
+    const getDates = () => {
+      const d = curDlg();
+      let a = d.querySelector('input[name="startDate"]'), b = d.querySelector('input[name="endDate"]');
+      if (!a || !b) {
+        const ds = [...d.querySelectorAll('input')].filter(i => /^\d{4}[-./]\d{2}[-./]\d{2}$/.test(i.value) || /일자|date/i.test((i.name || '') + (i.placeholder || '')));
+        a = a || ds[0]; b = b || ds[1];
+      }
+      return [a, b].filter(Boolean);
+    };
+    const hasDate = () => { const gg = gridsIn(curDlg())[0]; return gg && renderedRows(gg).some(r => Object.values(r.cells).some(v => v.startsWith(date))) && gg; };
+    let cg = hasDate() || (await setDatesAndQuery(curDlg, getDates, [date, date], hasDate) && hasDate());
     if (!cg) { await manual(`팝업의 방송일자를 ${date} ~ ${date} 로 맞추고 [조회]를 눌러주세요.`); cg = hasDate(); if (!cg) return 'skip'; }
 
     // 5) 원방송 편성 고르기
+    setStep('5 원방송 편성 선택');
     const cD = colOf(cg, '방송일시'), cP = colOf(cg, '프로그램명', '프로그램 명');
     const { all } = await scanGrid(cg);
     const atTime = all.filter(r => (r.cells[cD] || '').trim() === want);
@@ -442,6 +532,7 @@
     }
 
     // 6) 편성 상품 적용 → 확인
+    setStep('6 편성 상품 적용·확인');
     const apply = findBtn(dlg, '편성 상품 적용') || findBtn(document, '편성 상품 적용');
     if (!apply) { await manual('[편성 상품 적용] 버튼을 눌러 주세요.'); }
     else {
@@ -456,6 +547,7 @@
     }
 
     // 7) 복사 결과 확인 + 1번 주력상품 체크
+    setStep('7 복사 결과 확인·1번 주력 체크');
     p = prodPanel();
     pg = await waitFor(() => { const gg = prodGrid(p); return gg && renderedRows(gg).length && gg; }, 8000);
     if (!pg) { await manual('복사된 방송상품이 보이지 않습니다. 확인해 주세요.'); pg = prodGrid(prodPanel()); if (!pg || !renderedRows(pg).length) return 'skip'; }
@@ -472,6 +564,7 @@
     log(`  복사된 상품 ${prows.length}개, 1번 ${firstCode} 주력 체크`);
 
     // 8) 저장 (확인 후)
+    setStep('8 저장·확인');
     if (!S.autoSave) {
       const a = await ask(
         `저장할까요?\n\n대상: ${t.start} ${t.pgm}\n원본: ${want} ${srcName}\n상품 ${prows.length}개 · 1번(주력) ${firstCode} ${firstName}`,
@@ -491,6 +584,7 @@
     }
 
     // 9) 목록으로 돌아가 검증
+    setStep('9 목록 재조회·검증');
     await goList();
     await refreshList();
     const chk = (await scanGrid(listGrid(), r => r.cells.broadStrDtm === t.start && norm(r.cells.pgmTitleNm) === norm(t.pgm))).found;
@@ -518,15 +612,17 @@
           if (e === STOP) throw e;
           if (e && e.message === 'SKIP') { log('  건너뜀'); res.skip.push(t); continue; }
           log('  ❌ 오류: ' + (e && e.message)); console.error(e); res.fail.push(t);
-          const a = await ask(`오류가 났습니다: ${e && e.message}\n다음 건으로 계속할까요?`, ['계속', '중지']);
+          S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '스크립트 오류', msg: (e && e.message) || String(e), stack: e && e.stack ? String(e.stack).split('\n').slice(0, 4).join(' | ') : '' });
+          const a = await ask(`오류가 났습니다: ${e && e.message}\n[진단 내용 복사]를 눌러 Claude에게 보내주시면 고쳐드려요.\n다음 건으로 계속할까요?`, ['계속', '중지', '진단 내용 복사']);
           if (a === '중지') throw STOP;
         }
       }
     } catch (e) {
-      if (e === STOP) log('■ 중지했습니다.'); else { log('❌ ' + (e && e.message)); console.error(e); }
+      if (e === STOP) log('■ 중지했습니다.');
+      else { log('❌ ' + (e && e.message)); console.error(e); S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '실행 중단 오류', msg: (e && e.message) || String(e) }); }
     } finally {
       patchNative(false);
-      S.running = false;
+      S.running = false; S.cur = null; setStep('대기');
       $('[data-a="run"]').disabled = false; $('[data-a="scan"]').disabled = false; $('[data-a="stop"]').disabled = true;
       log(`=== 결과: 완료 ${res.ok.length} · 확인필요 ${res.check.length} · 건너뜀 ${res.skip.length} · 오류 ${res.fail.length}`);
       res.check.concat(res.fail).forEach(t => log(`   확인: ${t.start} ${t.pgm}`));
@@ -534,17 +630,103 @@
     }
   }
 
+  // ---------- 진단 내용 복사 ----------
+  function compactHTML(node, limit = 20000) {
+    if (!node) return '';
+    const c = node.cloneNode(true);
+    c.querySelectorAll('svg').forEach(v => { v.innerHTML = ''; });
+    c.querySelectorAll('.MuiTouchRipple-root, style, script').forEach(v => v.remove());
+    c.querySelectorAll('.tui-grid-body-area tbody').forEach(tb => [...tb.children].slice(6).forEach(tr => tr.remove()));
+    c.querySelectorAll('*').forEach(el => {
+      el.removeAttribute('style');
+      const cls = (el.getAttribute('class') || '').split(/\s+/).filter(x => x && !/^css-/.test(x)).join(' ');
+      if (cls) el.setAttribute('class', cls); else el.removeAttribute('class');
+    });
+    const h = c.outerHTML.replace(/\s{2,}/g, ' ');
+    return h.length > limit ? h.slice(0, limit) + ' …(잘림)' : h;
+  }
+  function descInput(i) {
+    const pr = reactProps(i);
+    return `  - input name=${i.name || '-'} id=${i.id || '-'} type=${i.type} value="${i.value}" ${i.readOnly ? 'readonly ' : ''}${i.disabled ? 'disabled ' : ''}placeholder="${i.placeholder || ''}" react=[${pr ? Object.keys(pr).filter(k => /^on/.test(k)).join(',') : '없음'}]`;
+  }
+  function descGrid(g) {
+    const rows = renderedRows(g);
+    const hm = headerMap(g);
+    const out = [`  - 그리드: 헤더 ${JSON.stringify(hm)} / 표시된 행 ${rows.length}`];
+    rows.slice(0, 5).forEach(r => out.push('    · ' + Object.entries(r.cells).filter(([k]) => k !== '_checked').map(([k, v]) => `${k}=${v}`).join(' | ')));
+    return out.join('\n');
+  }
+  function descScope(name, sc) {
+    if (!sc) return `[${name}] 없음`;
+    const out = [`[${name}]`];
+    out.push('  버튼: ' + [...sc.querySelectorAll('button')].filter(b => vis(b) && !inPanel(b)).map(b => norm(b.textContent)).filter(Boolean).join(', '));
+    [...sc.querySelectorAll('input')].filter(i => vis(i) && i.type !== 'checkbox' && !inPanel(i)).slice(0, 15).forEach(i => out.push(descInput(i)));
+    gridsIn(sc).forEach(g => out.push(descGrid(g)));
+    return out.join('\n');
+  }
+  function buildDiag() {
+    const L = [];
+    L.push(`### 세일즈원 자동화 진단: ${TOOL} v${VER}`);
+    L.push(`시각: ${new Date().toLocaleString('ko-KR')}`);
+    L.push(`URL: ${location.href}`);
+    L.push(`브라우저: ${navigator.userAgent} / 창 ${innerWidth}x${innerHeight}`);
+    L.push(`현재 단계: ${S.step} / 실행중: ${S.running} / 자동저장: ${S.autoSave}`);
+    if (S.cur) L.push(`현재 대상: ${S.cur.start} ${S.cur.pgm} (원방송 ${S.cur.orig && S.cur.orig.date} ${S.cur.orig && S.cur.orig.time}, 브랜드 ${S.cur.brand})`);
+    L.push(`대상 목록 ${S.targets.length}건: ` + S.targets.map(t => `${t.start} ${t.pgm}`).join(' / '));
+    L.push('\n## 오류·멈춤 기록');
+    L.push(S.errors.length ? S.errors.map(e => `- [${e.time}] (${e.step}) ${e.type}: ${e.msg}${e.stack ? ' / ' + e.stack : ''}`).join('\n') : '- 없음');
+    if (S.dateTries && S.dateTries.length) { L.push('\n## 날짜 입력 시도'); S.dateTries.slice(-12).forEach(x => L.push('- ' + x)); }
+    if (nativeMsgs.length) L.push('\n## 최근 alert/confirm: ' + nativeMsgs.slice(-5).join(' / '));
+    L.push('\n## 화면 요약');
+    let ex = '';
+    try {
+      const lp = listPanel(), pp = prodPanel();
+      L.push(`목록 화면(아이템 편성): ${lp ? '보임' : '안 보임'} / 상품 편성 화면: ${pp ? '보임' : '안 보임'}`);
+      if (pp) { const info = prodInfo(pp); L.push(`상품 편성 방송일시="${info.dtm}" 프로그램명="${info.pgm}"`); }
+      const dCopy = dialogByTitle('편성상품 복사'), dPgm = dialogByTitle('프로그램 조회');
+      L.push(descScope('편성상품 복사 팝업', dCopy));
+      L.push(descScope('프로그램 조회 팝업', dPgm));
+      if (pp && !dCopy && !dPgm) L.push(descScope('상품 편성 화면', pp));
+      if (lp && !pp) L.push(descScope('아이템 편성 목록', lp));
+      const others = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], .MuiDialog-paper, .swal2-popup')].filter(d => vis(d) && !inPanel(d) && d !== dCopy && d !== dPgm);
+      others.slice(0, 3).forEach((d, i) => L.push(`[기타 팝업${i + 1}] ${txt(d).slice(0, 200)}`));
+      const tabs = [...document.querySelectorAll('body *')].filter(e => !inPanel(e) && e.children.length === 0 && /편성|현황|관리|점검/.test(e.textContent) && e.textContent.length < 20 && vis(e) && e.getBoundingClientRect().top > innerHeight * 0.8).map(e => e.textContent.trim());
+      L.push('하단 탭: ' + [...new Set(tabs)].join(', '));
+      const focus = dCopy || dPgm || (S.step.startsWith('7') || S.step.startsWith('8') ? pp : null);
+      if (focus) ex = compactHTML(focus);
+    } catch (e) { L.push('화면 요약 중 오류: ' + e.message); }
+    L.push('\n## 최근 로그');
+    L.push(S.logs.slice(-60).join('\n'));
+    if (ex) { L.push('\n## 현재 팝업/화면 HTML(축약)'); L.push(ex); }
+    return L.join('\n');
+  }
+  async function copyDiag() {
+    const text = buildDiag();
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; }
+    if (!ok) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+    }
+    console.log(text);
+    log(ok ? `📋 진단 내용을 복사했습니다(${text.length}자). Claude 대화창에 붙여넣어 주세요.` : '❗ 클립보드 복사 실패. F12 콘솔에 출력된 진단 내용을 복사해 주세요.');
+  }
+
   P.addEventListener('click', e => {
     const a = e.target.closest('[data-a]'); if (!a) return;
     const act = a.dataset.a;
     if (act === 'close') { if (S.running) { S.stop = true; S.cancelAsk && S.cancelAsk(); } P.style.display = 'none'; }
     if (act === 'scan') doScan();
+    if (act === 'diag') copyDiag();
     if (act === 'run') run();
     if (act === 'stop') { S.stop = true; S.cancelAsk && S.cancelAsk(); log('중지 요청…'); }
   });
   $('[data-r="auto"]').addEventListener('change', e => { S.autoSave = e.target.checked; });
 
-  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) doScan(); } };
+  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) doScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER };
   log(`v${VER} 시작. 대상 확인 후 [선택 항목 실행]을 누르세요.`);
   await doScan();
 })();
