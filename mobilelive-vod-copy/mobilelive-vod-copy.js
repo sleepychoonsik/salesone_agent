@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.4.1  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.4.2  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.4.1';
+  const VER = '1.4.2';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 같은 버전이 이미 떠 있으면 다시 보여주기만, 다른(옛) 버전이면 지우고 새로 띄운다(깃헙 자동 업데이트 대응)
@@ -544,11 +544,12 @@
     return true;
   }
   async function searchAndScan() {
-    if (S.running) return;
+    if (S.running || S.searching) return;
+    S.searching = true;
     $('[data-a="search"]').disabled = true;
     try { if (await searchList()) await doScan(); }
     catch (e) { if (e !== STOP) { log('❌ ' + e.message); S.errors.push({ time: new Date().toTimeString().slice(0, 8), step: S.step, type: '조회 오류', msg: e.message }); } }
-    finally { $('[data-a="search"]').disabled = false; S.stop = false; setStep('대기'); }
+    finally { S.searching = false; $('[data-a="search"]').disabled = false; S.stop = false; setStep('대기'); }
   }
 
   async function doScan() {
