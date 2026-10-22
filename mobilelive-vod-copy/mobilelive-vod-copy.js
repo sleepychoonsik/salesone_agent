@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5.1  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.5.2  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.5.1';
+  const VER = '1.5.2';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
@@ -775,11 +775,17 @@
     else {
       nativeMsgs.length = 0;
       await realClick(apply);
-      const msgs = (await handleConfirms({ max: 2, firstWait: 4000 })).concat(nativeMsgs);
+      const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 3000 })).concat(nativeMsgs);
+      const reg = msgs.join(' ').match(/(\d+)\s*개의?\s*상품/); if (reg) log(`  복사 대상 상품 ${reg[1]}개`);
       const err = errIn(msgs);
       if (err) { await manual(`적용 중 메시지: ${err}\n화면을 확인해 주세요.`); }
     }
-    if (!(await waitFor(() => !dialogByTitle('편성상품 복사'), 4000))) {
+    // 팝업이 닫힐 때까지 기다리면서, 그 사이 늦게 뜨는 확인창도 눌러 준다
+    for (let i = 0; i < 4 && dialogByTitle('편성상품 복사'); i++) {
+      if (await waitFor(() => !dialogByTitle('편성상품 복사'), 4000)) break;
+      await handleConfirms({ max: 1, firstWait: 500 });
+    }
+    if (dialogByTitle('편성상품 복사')) {
       await manual('편성상품 복사 팝업이 아직 열려 있습니다. 적용이 끝났는지 확인하고 팝업을 닫아 주세요.');
     }
 
@@ -815,7 +821,7 @@
     else {
       nativeMsgs.length = 0;
       await realClick(save);
-      const msgs = (await handleConfirms({ max: 3, firstWait: 5000, nextWait: 2500 })).concat(nativeMsgs);
+      const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 6000 })).concat(nativeMsgs);
       const err = errIn(msgs);
       if (err) { log('  ❗ 저장 메시지: ' + err); await manual(`저장 중 메시지: ${err}\n화면을 확인해 주세요.`); }
     }
