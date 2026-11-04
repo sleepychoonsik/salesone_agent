@@ -1,5 +1,5 @@
 /* =========================================================================
- * [세일즈원 자동화] 장기무이자(무10) 세팅 v1.0.1
+ * [세일즈원 자동화] 장기무이자(무10) 세팅 v1.0.2
  *  - 상품조회/수정 > 가격/프로모션 기능을 세일즈원 API로 처리 (화면과 동일한 요청)
  *  - 직매입 : 기존 무이자 종료 → 200,000 → 무10(당사100) → 가격 원복 → 기존 무이자 복구
  *  - 위수탁 : [1단계] 기존 무이자 종료 → 200,000 예약 → 무10(당사50/업체50) 합의요청
@@ -7,10 +7,30 @@
  *  - 업체부담 > 0 인 무이자는 반드시 협력사 합의 요청으로만 등록 (직접 등록 금지)
  *  - 문제가 생기면 패널의 [진단 내용 복사]로 버전·단계·오류·URL·API 기록·로그를 복사해 Claude에게 붙여넣는다.
  * ========================================================================= */
-(() => {
+(async () => {
   'use strict';
   const TITLE = '장기무이자 세팅 자동화';
-  const VER = 'v1.0.1';
+  const VER = 'v1.0.2';
+  // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
+  if (!window.__NIF_FRESH) {
+    try {
+      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 4000);
+      const R = 'sleepychoonsik/salesone_agent', F = 'installment-free-setting/installment-free-setting.js';
+      const sha = (await (await fetch(`https://api.github.com/repos/${R}/commits/main`, { headers: { Accept: 'application/vnd.github.sha' }, cache: 'no-store', signal: ctl.signal })).text()).trim();
+      if (/^[0-9a-f]{40}$/.test(sha)) {
+        const code = await (await fetch(`https://raw.githubusercontent.com/${R}/${sha}/${F}`, { signal: ctl.signal })).text();
+        const m = code.match(/const VER = '([^']+)'/);
+        clearTimeout(tm);
+        if (m && m[1] !== VER) {
+          window.__NIF_FRESH = true;
+          setTimeout(() => { window.__NIF_FRESH = false; }, 5000);
+          (0, eval)(code);
+          return;
+        }
+      }
+      clearTimeout(tm);
+    } catch (e) { /* 확인 실패 시 지금 버전으로 진행 */ }
+  }
   const BFF = 'https://everest-bff.gshs.co.kr';
   const PANEL_ID = '__nif_panel';
   const LS_KEY = '__nif_state_v1';
