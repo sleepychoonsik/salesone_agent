@@ -1,5 +1,5 @@
 /* =========================================================================
- * [세일즈원 자동화] 장기무이자(무10) 세팅 v1.0
+ * [세일즈원 자동화] 장기무이자(무10) 세팅 v1.0.1
  *  - 상품조회/수정 > 가격/프로모션 기능을 세일즈원 API로 처리 (화면과 동일한 요청)
  *  - 직매입 : 기존 무이자 종료 → 200,000 → 무10(당사100) → 가격 원복 → 기존 무이자 복구
  *  - 위수탁 : [1단계] 기존 무이자 종료 → 200,000 예약 → 무10(당사50/업체50) 합의요청
@@ -10,7 +10,7 @@
 (() => {
   'use strict';
   const TITLE = '장기무이자 세팅 자동화';
-  const VER = 'v1.0';
+  const VER = 'v1.0.1';
   const BFF = 'https://everest-bff.gshs.co.kr';
   const PANEL_ID = '__nif_panel';
   const LS_KEY = '__nif_state_v1';
@@ -367,7 +367,7 @@
       if (a.err) return `<tr><td>${a.cd}</td><td colspan="6" style="color:#c00">${a.err}</td></tr>`;
       const old = a.old ? `${a.old.mm}개월 (업체${a.old.sup})` : '없음';
       const st = a.has10 ? '무10 등록됨' : (a.consign ? '1단계: 무10 합의요청' : '전체 진행');
-      const pr = a.needRaise ? `200,000 → ${a.steps.map(n => n.toLocaleString()).join(' → ')}` : `변경 없음 (${Number(a.basePrc).toLocaleString()})`;
+      const pr = a.has10 ? '-' : a.needRaise ? `200,000 → ${a.steps.map(n => n.toLocaleString()).join(' → ')}` : `변경 없음 (${Number(a.basePrc).toLocaleString()})`;
       return `<tr><td>${a.cd}<br><small>${a.nm}</small></td><td>${a.consign ? '위수탁' : '직매입'}</td><td>${Number(a.cur.salePrc).toLocaleString()}</td><td>${old}</td><td>${pr}</td><td>${a.consign ? '50/50 (합의)' : '100/0'}</td><td>${st}</td></tr>`;
     }).join('');
     $('nif-table').innerHTML = `<table><tr><th>상품</th><th>형태</th><th>현재가</th><th>기존 무이자</th><th>가격</th><th>무10 당사/업체</th><th>할 일</th></tr>${rows}</table>
@@ -412,7 +412,8 @@
   $('nif-diag').onclick = async () => {
     const text = buildDiag();
     let done = false;
-    try { await navigator.clipboard.writeText(text); done = true; } catch (e) {}
+    // 권한 대기로 멈추는 경우가 있어 1.5초 안에 안 되면 예비 방식으로 복사
+    try { done = await Promise.race([navigator.clipboard.writeText(text).then(() => true), sleep(1500).then(() => false)]); } catch (e) {}
     if (!done) {
       const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
       document.body.appendChild(ta); ta.select();
