@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 — 공유용(브랜드 입력) v1.0  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 — 공유용(브랜드 입력) v1.1  (변경 이력: CHANGELOG.md)
  * 원본: mobilelive-vod-copy v1.7 (SJ와니 전용)에서 브랜드만 패널에서 바꿔 쓸 수 있게 한 버전
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭
@@ -17,7 +17,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.0';
+  const VER = '1.1';
   const TOOL = '모바일라이브 VOD 편성상품 복사(공유용)';
   const PANEL_ID = '__mlshare_panel';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
@@ -709,6 +709,28 @@
     return g ? all.find(b => g.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) || all[0] : all[0];
   }
 
+  // 편성상품 복사 팝업: 원본 편성을 고르면 그 아래로 상품 목록(10자리 상품코드)이 펼쳐진다.
+  // 상품코드 개수가 0보다 크고 연속 3번(약 0.9초) 그대로일 때까지 기다린다. 못 찾으면 1.5초 쉬고 진행.
+  async function waitSrcItems(dlgFn, ms = 10000) {
+    const count = () => {
+      const d = dlgFn();
+      return d ? [...d.querySelectorAll('td,div,span')].filter(e => isLeaf(e) && /^\d{10}$/.test(e.textContent.trim())).length : 0;
+    };
+    const t0 = Date.now();
+    let last = -1, same = 0;
+    while (Date.now() - t0 < ms) {
+      if (S.stop) throw STOP;
+      const n = count();
+      if (n > 0 && n === last) { if (++same >= 2) { log(`  원본 상품 목록 ${n}개 확인`); await sleep(500); return n; } }
+      else same = 0;
+      last = n;
+      await sleep(300);
+    }
+    log('  ⚠ 원본 상품 목록을 확인하지 못해 1.5초 기다린 뒤 적용합니다.');
+    await sleep(1500);
+    return 0;
+  }
+
   async function processOne(t) {
     S.cur = t;
     log(`▶ ${t.start} ${t.pgm}`);
@@ -804,14 +826,30 @@
 
     // 6) 편성 상품 적용 → 확인
     setStep('6 편성 상품 적용·확인');
-    const apply = findBtn(curDlg(), '편성 상품 적용') || findBtn(document, '편성 상품 적용');
-    if (!apply) { await manual('[편성 상품 적용] 버튼을 눌러 주세요.'); }
+    // 원본을 고른 직후 바로 적용하면 원본 상품 목록을 다 불러오기 전에 적용돼
+    // "알림상품코드 … 비어 있을 수 없습니다" 오류가 난다 → 목록이 다 뜰 때까지 기다린 뒤 적용
+    await waitSrcItems(curDlg);
+    const applyBtn = () => findBtn(curDlg(), '편성 상품 적용') || findBtn(document, '편성 상품 적용');
+    if (!applyBtn()) { await manual('[편성 상품 적용] 버튼을 눌러 주세요.'); }
     else {
-      nativeMsgs.length = 0;
-      await realClick(apply);
-      const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 3000, doneRe: /등록됩니다|등록되었/ })).concat(nativeMsgs);
-      const reg = msgs.join(' ').match(/(\d+)\s*개의?\s*상품/); if (reg) log(`  복사 대상 상품 ${reg[1]}개`);
-      const err = errIn(msgs);
+      let err = '';
+      for (let tryNo = 1; tryNo <= 2; tryNo++) {
+        const apply = applyBtn();
+        if (!apply) break;
+        nativeMsgs.length = 0;
+        await realClick(apply);
+        const msgs = (await handleConfirms({ max: 3, firstWait: 15000, nextWait: 3000, doneRe: /등록됩니다|등록되었/ })).concat(nativeMsgs);
+        const reg = msgs.join(' ').match(/(\d+)\s*개의?\s*상품/); if (reg) log(`  복사 대상 상품 ${reg[1]}개`);
+        err = errIn(msgs) || '';
+        // 원본 목록 로딩이 늦어 생기는 오류면 한 번 더 기다렸다가 다시 적용(저장 전 단계라 재시도해도 안전)
+        if (err && tryNo === 1 && /비어\s*있을\s*수\s*없|알림상품/.test(err) && dialogByTitle('편성상품 복사')) {
+          log('  ↻ 원본 상품 목록 로딩 대기 후 [편성 상품 적용] 다시 시도');
+          await sleep(1500);
+          await waitSrcItems(curDlg);
+          continue;
+        }
+        break;
+      }
       if (err) { await manual(`적용 중 메시지: ${err}\n화면을 확인해 주세요.`); }
     }
     // 팝업이 닫힐 때까지 기다리면서, 그 사이 늦게 뜨는 확인창도 눌러 준다
