@@ -35,7 +35,7 @@ n세일즈원에서 SJ와니·AM 상품의 **전체주문가능수량**을 **주
 
 ## 디자인
 
-- Montage(wanteddev/montage-web)의 semantic 토큰을 씁니다: foreground/background/surface/line, typography(headline2·label1·label2·caption1·caption2), radius(8·10·12·16), shadow large, Button(small·medium), Checkbox, SectionMessage.
+- 레포 공통 디자인(`design/so-ui.css`, Claude 디자인 시스템 "세일즈원 자동화 UI")을 씁니다. 바탕은 Montage(wanteddev/montage-web)의 semantic 토큰입니다: foreground/background/surface/line, typography(headline2·label1·label2·caption1·caption2), radius(8·10·12·16), shadow large, Button(small·medium), Checkbox, SectionMessage.
 - 폰트는 Pretendard입니다(jsDelivr). 불러오지 못하면 시스템 한글 폰트로 표시됩니다.
 - 브랜드 컬러는 Montage blue 대신 **GS SHOP 블루 `#0088FF`**를 씁니다.
 - 세일즈원 화면 CSS와 섞이지 않도록 Shadow DOM 안에 그립니다.

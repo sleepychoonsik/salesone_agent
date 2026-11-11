@@ -1,5 +1,5 @@
 /* =========================================================================
- * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1.3
+ * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.2
  *  - 직매입 재고/평가감 현황(영업부서 S31)에서 SJ와니·AM 상품코드 추출
  *  - 판매상태/수량관리: 전체주문가능수량 = 주문가능재고(A), 주문가능재고 ≤ 0 인 판매중 → 일시품절
  *  - 재고 있는데 판매종료/일시품절인 SKU는 체크한 것만 판매중으로 전환
@@ -7,12 +7,12 @@
  *  - 저장은 1000건 단위, 저장 뒤 재조회 점검
  *  - 화면 요소를 못 찾으면 멈추고 "직접 처리 후 [계속]" 안내
  *  - 문제가 생기면 [진단 내용 복사] → Claude에게 붙여넣기
- *  - 디자인: Montage(wanteddev/montage-web) 토큰 · Pretendard · 포인트 #0088FF
+ *  - 디자인: 세일즈원 자동화 UI 디자인 시스템(design/so-ui.css) — Montage 토큰 · Pretendard · 포인트 #0088FF
  * ========================================================================= */
 (async () => {
   'use strict';
   const TITLE = '재고동기화';
-  const VER = 'v1.1.3';
+  const VER = 'v1.2';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__SSY_FRESH) {
     try {
@@ -49,6 +49,7 @@
   const isTargetSku = s => { s = String(s || ''); return s.includes('SJ와니') || /sj wani/i.test(s) || /(?<![A-Za-z])AM(?![A-Za-z])/.test(s); };
   const isPrdCd = c => /^1\d{9}$/.test(String(c || ''));
   const FLAG = { N: '판매중', Y: '판매종료', T: '일시품절', S: '품절해제' };
+  const TAG = { N: 'on', S: 'on', T: 'paused', Y: 'ended' };   // 디자인 시스템 Tag 종류
 
   /* ---------------- 상태 (진단용 · 토큰·쿠키는 담지 않음) ---------------- */
   const D = { step: '대기', errors: [], logs: [] };
@@ -322,7 +323,7 @@
     const picks = S.rep.filter(r => r.pick);
     const nt = S.plan.filter(p => p.fA !== p.fB).length;
     if (!nt && !picks.length) { log('저장할 판매상태 변경이 없어요'); return; }
-    const ok = await ask('brand', '판매상태를 저장할까요?',
+    const ok = await ask('info', '판매상태를 저장할까요?',
       `일시품절 전환 ${nt}건${picks.length ? ` · 판매재개 ${picks.length}건` : ''}<br>저장 직전에 다시 조회해서 최신 값 기준으로 적용합니다. 그 사이 바뀐 수량도 함께 맞춥니다.`, '저장', '취소');
     if (!ok) { log('저장 취소'); return; }
     log('저장 직전 재조회');
@@ -437,9 +438,9 @@
     return L.join('\n');
   }
 
-  /* ---------------- UI (Montage 토큰) ---------------- */
-  if (!document.getElementById('__ssy_font')) {
-    const lk = document.createElement('link'); lk.id = '__ssy_font'; lk.rel = 'stylesheet';
+  /* ---------------- UI (세일즈원 자동화 UI 디자인 시스템) ---------------- */
+  if (!document.getElementById('__so_font')) {
+    const lk = document.createElement('link'); lk.id = '__so_font'; lk.rel = 'stylesheet';
     lk.href = 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css';
     document.head.appendChild(lk);
   }
@@ -447,116 +448,28 @@
   const host = document.createElement('div'); host.id = PANEL_ID;
   host.style.cssText = 'position:fixed;top:72px;right:16px;z-index:2147483000;';
   const root = host.attachShadow({ mode: 'open' });
-  root.innerHTML = `<style>
-:host{all:initial;
-  /* Montage semantic tokens — brand = GS SHOP blue */
-  --brand:#0088FF;--brand-strong:#0077E6;--brand-heavy:#0066C7;--brand-subtle:rgba(0,136,255,.05);--brand-line:rgba(0,136,255,.28);--brand-focus:rgba(0,136,255,.12);
-  --fg:#171719;--fg-2:rgba(46,47,51,.88);--fg-3:rgba(55,56,60,.61);--fg-4:rgba(55,56,60,.28);--fg-dis:rgba(55,56,60,.16);
-  --bg:#FFFFFF;--bg-2:#F7F7F8;--sf-2:rgba(112,115,124,.08);--sf-3:rgba(112,115,124,.05);--sf-dis:#F4F4F5;
-  --line:rgba(112,115,124,.22);--line-2:rgba(112,115,124,.16);--line-3:rgba(112,115,124,.08);
-  --pos:#00BF40;--pos-sf:rgba(0,191,64,.08);--cau:#FF9200;--cau-sf:rgba(255,146,0,.08);--neg:#FF4242;--neg-strong:#E52222;--neg-sf:rgba(255,66,66,.08);
-  --shadow:0 6px 10px -4px rgba(23,23,23,.08),0 16px 24px -6px rgba(23,23,23,.08);
-  --font:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
-*{box-sizing:border-box}
-.p{font-family:var(--font);color:var(--fg);width:452px;max-height:84vh;display:flex;flex-direction:column;background:var(--bg);
-   border:1px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;-webkit-font-smoothing:antialiased}
-/* header — headline2 */
-.h{display:flex;align-items:center;gap:8px;padding:14px 12px 14px 18px;border-bottom:1px solid var(--line-3);cursor:move;user-select:none}
-.h .t{flex:1;font-size:17px;line-height:24px;font-weight:600;letter-spacing:0}
-.h .t i{display:inline-block;width:8px;height:8px;border-radius:9999px;background:var(--brand);margin-right:8px;vertical-align:2px}
-.chip{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:6px;background:var(--brand-subtle);color:var(--brand);font-size:11px;line-height:14px;font-weight:600;letter-spacing:.0311em;vertical-align:2px;margin-left:4px}
-.ib{width:32px;height:32px;border:0;border-radius:10px;background:transparent;color:var(--fg-3);font:500 18px/1 var(--font);cursor:pointer}
-.ib:hover{background:var(--sf-2);color:var(--fg)}
-.b{padding:16px 18px 18px;overflow:auto;display:flex;flex-direction:column;gap:12px}
-.b>*{flex-shrink:0}
-#view{display:flex;flex-direction:column;gap:12px}
-#view:empty,#ask:empty{display:none}
-/* buttons — Montage small (32 / r10 / caption1 bold) & medium (40 / r12 / label1 bold) */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;border:0;cursor:pointer;font-family:var(--font);white-space:nowrap;transition:background .12s,box-shadow .12s}
-.btn.md{min-height:40px;padding:10px 16px;border-radius:12px;font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}
-.btn.sm{min-height:32px;padding:8px 12px;border-radius:10px;font-size:12px;line-height:16px;font-weight:600;letter-spacing:.0252em}
-.btn.xs{min-height:28px;padding:6px 10px;border-radius:8px;font-size:12px;line-height:16px;font-weight:600}
-.btn.primary{background:var(--brand);color:#fff}.btn.primary:hover{background:var(--brand-strong)}
-.btn.outlined{background:var(--bg);color:var(--brand);box-shadow:inset 0 0 0 1px var(--line)}.btn.outlined:hover{background:var(--brand-subtle)}
-.btn.assist{background:var(--sf-2);color:var(--fg-2)}.btn.assist:hover{background:rgba(112,115,124,.14)}
-.btn.text{background:transparent;color:var(--fg-3);padding-left:6px;padding-right:6px}.btn.text:hover{color:var(--fg)}
-.btn:disabled{background:var(--sf-dis)!important;color:var(--fg-dis)!important;box-shadow:none!important;cursor:default}
-.btn:focus-visible,.cb:focus-visible{outline:none;box-shadow:0 0 0 3px var(--brand-focus)}
-.full{width:100%}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-/* steps */
-.steps{display:flex;gap:4px}
-.st{flex:1;display:flex;flex-direction:column;gap:4px;font-size:11px;line-height:14px;font-weight:500;color:var(--fg-3);letter-spacing:.0311em}
-.st b{display:block;height:4px;border-radius:9999px;background:var(--sf-2)}
-.st.on{color:var(--brand)}.st.on b{background:var(--brand)}.st.done b{background:var(--brand-line)}
-/* stat cards */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.sc{background:var(--bg-2);border-radius:12px;padding:10px 10px 9px}
-.sc .k{font-size:11px;line-height:14px;color:var(--fg-3);font-weight:500;letter-spacing:.0311em}
-.sc .v{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.012em;font-variant-numeric:tabular-nums}
-.sc.brand .v{color:var(--brand)}
-/* section message */
-.msg{display:flex;gap:10px;padding:16px 16px;border-radius:12px;font-size:13px;line-height:18px;letter-spacing:.0194em;background:var(--sf-3);color:var(--fg-2)}
-.msg .dot{flex:none;width:18px;height:18px;border-radius:9999px;display:grid;place-items:center;font:700 11px/1 var(--font);color:#fff;background:var(--fg-3);margin-top:0}
-.msg.brand{background:var(--brand-subtle)}.msg.brand .dot{background:var(--brand)}
-.msg.caution{background:var(--cau-sf)}.msg.caution .dot{background:var(--cau)}
-.msg.negative{background:var(--neg-sf)}.msg.negative .dot{background:var(--neg)}
-.msg.positive{background:var(--pos-sf)}.msg.positive .dot{background:var(--pos)}
-.msg .c{flex:1;min-width:0}.msg .c strong{display:block;color:var(--fg);font-weight:600;margin-bottom:4px}
-.msg .ml{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-3);max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:16px}
-.msg .act{display:flex;gap:6px;margin-top:10px}
-/* section header */
-.sh{display:flex;align-items:center;gap:6px;font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}
-.sh .n{color:var(--brand)}.sh .sp{flex:1}
-/* table */
-.tw{border:1px solid var(--line-2);border-radius:12px;overflow:auto;max-height:228px}
-table{border-collapse:collapse;width:100%;font-size:12px;line-height:16px;letter-spacing:.0252em}
-th{position:sticky;top:0;background:var(--bg-2);color:var(--fg-3);font-weight:500;text-align:left;padding:8px;border-bottom:1px solid var(--line-2);white-space:nowrap}
-td{padding:8px;border-bottom:1px solid var(--line-3);vertical-align:top;color:var(--fg-2)}
-tr:last-child td{border-bottom:0}
-td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-td .s{display:block;color:var(--fg-3);font-size:11px;line-height:14px;margin-top:2px}
-.up{color:var(--brand);font-weight:600}.dn{color:var(--neg-strong);font-weight:600}
-.tag{display:inline-flex;height:20px;align-items:center;padding:0 6px;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap}
-.tag.Y{background:var(--sf-2);color:var(--fg-3)}.tag.T{background:var(--cau-sf);color:#D47800}.tag.N{background:var(--brand-subtle);color:var(--brand)}
-tr.pk td{background:var(--brand-subtle)}
-/* checkbox — Montage: 20px, r5, brand fill */
-.cb{appearance:none;-webkit-appearance:none;width:20px;height:20px;margin:0;border-radius:5px;box-shadow:inset 0 0 0 1.5px var(--line);background:var(--bg);cursor:pointer;display:grid;place-items:center;vertical-align:middle}
-.cb:checked{background:var(--brand);box-shadow:none}
-.cb:checked::after{content:"";width:10px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:translateY(-1px) rotate(-45deg)}
-.hint{font-size:12px;line-height:16px;color:var(--fg-3);letter-spacing:.0252em}
-/* log */
-details{border-top:1px solid var(--line-3);padding-top:10px}
-summary{cursor:pointer;font-size:13px;line-height:18px;font-weight:600;color:var(--fg-2);list-style:none}
-summary::-webkit-details-marker{display:none}
-summary::before{content:"▸";display:inline-block;margin-right:6px;color:var(--fg-3);transition:transform .15s}
-details[open] summary::before{transform:rotate(90deg)}
-.log{margin-top:8px;background:var(--bg-2);border-radius:10px;padding:10px;max-height:150px;overflow:auto;font:12px/18px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--fg-2);white-space:pre-wrap}
-.log .e{color:var(--neg-strong)}
-.foot{display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap}
-.spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:9999px;animation:r .8s linear infinite}
-@keyframes r{to{transform:rotate(360deg)}}
-</style>
-<div class="p">
-  <div class="h"><div class="t"><i></i>${TITLE}<span class="chip">${VER}</span><span class="chip" style="background:var(--sf-2);color:var(--fg-3)">SJ와니 · AM</span></div>
-    <button class="ib" id="min" title="접기">–</button><button class="ib" id="x" title="닫기">×</button></div>
-  <div class="b" id="body">
-    <div class="steps" id="steps"></div>
-    <button class="btn md primary full" id="all">대상 추출하고 수량 맞추기</button>
-    <div class="grid2">
-      <button class="btn sm outlined" id="s1">① 대상 추출</button>
-      <button class="btn sm outlined" id="s2">② 조회·수량 적용</button>
-      <button class="btn sm primary" id="s3">③ 판매상태 저장</button>
-      <button class="btn sm outlined" id="s4" title="저장하지 않고 다시 조회해서 확인만 합니다">④ 점검만 다시</button>
+  // 디자인 시스템 CSS: design/so-ui.css → scripts/inject-design.js 가 아래 표식 사이를 채운다 (직접 고치지 않는다)
+  const SO_UI_CSS = /*SO-UI:BEGIN*/`:host{all:initial;--brand:#0088FF;--brand-strong:#0077E6;--brand-heavy:#0066C7;--brand-text:#0070D6;--brand-subtle:rgba(0,136,255,0.05);--brand-line:rgba(0,136,255,0.28);--brand-focus:rgba(0,136,255,0.12);--fg:#171719;--fg-secondary:rgba(46,47,51,0.88);--fg-tertiary:rgba(55,56,60,0.61);--fg-quaternary:rgba(55,56,60,0.28);--fg-disable:rgba(55,56,60,0.16);--on-brand:#FFFFFF;--bg:#FFFFFF;--bg-secondary:#F7F7F8;--surface-secondary:rgba(112,115,124,0.08);--surface-tertiary:rgba(112,115,124,0.05);--surface-disable:#F4F4F5;--line:rgba(112,115,124,0.22);--line-secondary:rgba(112,115,124,0.16);--line-tertiary:rgba(112,115,124,0.08);--positive:#00BF40;--positive-text:#006E25;--positive-surface:rgba(0,191,64,0.08);--cautionary:#FF9200;--cautionary-text:#9C5800;--cautionary-surface:rgba(255,146,0,0.08);--negative:#FF4242;--negative-text:#E52222;--negative-surface:rgba(255,66,66,0.08);--dimmer:rgba(23,23,25,0.52);--font-sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;--font-mono:ui-monospace,SFMono-Regular,Consolas,monospace;--space-4:4px;--space-6:6px;--space-8:8px;--space-10:10px;--space-12:12px;--space-16:16px;--space-18:18px;--radius-5:5px;--radius-6:6px;--radius-8:8px;--radius-10:10px;--radius-12:12px;--radius-16:16px;--radius-full:9999px;--shadow-panel:0px 6px 10px -4px rgba(23,23,23,0.08),0px 16px 24px -6px rgba(23,23,23,0.08);--shadow-focus:0px 0px 0px 3px rgba(0,136,255,0.12);--panel-width:452px;--control-xs:28px;--control-sm:32px;--control-md:40px;--checkbox:20px;--z-panel:2147483000}.so-panel{font-family:var(--font-sans);color:var(--fg);width:var(--panel-width);max-height:84vh;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line-secondary);border-radius:var(--radius-16);box-shadow:var(--shadow-panel);overflow:hidden;-webkit-font-smoothing:antialiased;box-sizing:border-box}.so-panel *{box-sizing:border-box}.so-panel__head{display:flex;align-items:center;gap:var(--space-8);padding:14px 12px 14px var(--space-18);border-bottom:1px solid var(--line-tertiary);cursor:move;user-select:none}.so-panel__title{flex:1;min-width:0;font-size:17px;line-height:24px;font-weight:600}.so-panel__dot{display:inline-block;width:8px;height:8px;border-radius:var(--radius-full);background:var(--brand);margin-right:var(--space-8);vertical-align:2px}.so-panel__body{padding:var(--space-16) var(--space-18) var(--space-18);overflow:auto;display:flex;flex-direction:column;gap:var(--space-12)}.so-panel__foot{display:flex;gap:var(--space-4);justify-content:flex-end;flex-wrap:wrap}.so-chip{display:inline-flex;align-items:center;height:20px;padding:0 var(--space-6);border-radius:var(--radius-6);background:var(--brand-subtle);color:var(--brand-text);font-size:11px;line-height:14px;font-weight:600;letter-spacing:.0311em;vertical-align:2px;margin-left:var(--space-4)}.so-chip--neutral{background:var(--surface-secondary);color:var(--fg-tertiary)}.so-icon-btn{width:var(--control-sm);height:var(--control-sm);border:0;border-radius:var(--radius-10);background:transparent;color:var(--fg-tertiary);font:500 18px/1 var(--font-sans);cursor:pointer}.so-icon-btn:hover{background:var(--surface-secondary);color:var(--fg)}.so-btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-4);border:0;cursor:pointer;font-family:var(--font-sans);font-weight:600;white-space:nowrap;transition:background .12s,box-shadow .12s}.so-btn--md{min-height:var(--control-md);padding:10px 16px;border-radius:var(--radius-12);font-size:14px;line-height:20px;letter-spacing:.0145em}.so-btn--sm{min-height:var(--control-sm);padding:8px 12px;border-radius:var(--radius-10);font-size:12px;line-height:16px;letter-spacing:.0252em}.so-btn--xs{min-height:var(--control-xs);padding:6px 10px;border-radius:var(--radius-8);font-size:12px;line-height:16px}.so-btn--primary{background:var(--brand);color:var(--on-brand)}.so-btn--primary:hover{background:var(--brand-strong)}.so-btn--primary:active{background:var(--brand-heavy)}.so-btn--outlined{background:var(--bg);color:var(--brand-text);box-shadow:inset 0 0 0 1px var(--line)}.so-btn--outlined:hover{background:var(--brand-subtle)}.so-btn--assistive{background:var(--surface-secondary);color:var(--fg-secondary)}.so-btn--text{background:transparent;color:var(--fg-tertiary);padding-left:var(--space-6);padding-right:var(--space-6)}.so-btn--text:hover{color:var(--fg)}.so-btn--full{width:100%}.so-btn:disabled{background:var(--surface-disable);color:var(--fg-disable);box-shadow:none;cursor:default}.so-btn:focus-visible,.so-checkbox:focus-visible{outline:none;box-shadow:var(--shadow-focus)}.so-spinner{width:14px;height:14px;border:2px solid var(--brand-line);border-top-color:var(--brand);border-radius:var(--radius-full);animation:so-spin .8s linear infinite}.so-btn--primary .so-spinner{border-color:rgba(255,255,255,.4);border-top-color:var(--on-brand)}@keyframes so-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.so-spinner{animation-duration:2.4s}}.so-checkbox{appearance:none;-webkit-appearance:none;width:var(--checkbox);height:var(--checkbox);margin:0;border-radius:var(--radius-5);box-shadow:inset 0 0 0 1.5px var(--line);background:var(--bg);cursor:pointer;display:inline-grid;place-items:center;vertical-align:middle}.so-checkbox:checked{background:var(--brand);box-shadow:none}.so-checkbox:checked::after{content:"";width:10px;height:6px;border-left:2px solid var(--on-brand);border-bottom:2px solid var(--on-brand);transform:translateY(-1px) rotate(-45deg)}.so-checkbox:disabled{background:var(--surface-disable);box-shadow:none;cursor:default}.so-steps{display:flex;gap:var(--space-4)}.so-step{flex:1;display:flex;flex-direction:column;gap:var(--space-4);font-size:11px;line-height:14px;font-weight:500;color:var(--fg-tertiary);letter-spacing:.0311em}.so-step::before{content:"";display:block;height:4px;border-radius:var(--radius-full);background:var(--surface-secondary)}.so-step--done::before{background:var(--brand-line)}.so-step--current{color:var(--brand-text)}.so-step--current::before{background:var(--brand)}.so-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-6)}.so-stat{background:var(--bg-secondary);border-radius:var(--radius-12);padding:10px 10px 9px;min-width:0}.so-stat__label{font-size:11px;line-height:14px;color:var(--fg-tertiary);font-weight:500;letter-spacing:.0311em}.so-stat__value{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.012em;font-variant-numeric:tabular-nums}.so-stat--brand .so-stat__value{color:var(--brand)}.so-msg{display:flex;gap:var(--space-10);padding:var(--space-12) 14px;border-radius:var(--radius-12);font-size:13px;line-height:18px;letter-spacing:.0194em;background:var(--surface-tertiary);color:var(--fg-secondary)}.so-msg__icon{flex:none;width:18px;height:18px;border-radius:var(--radius-full);display:grid;place-items:center;font:700 11px/1 var(--font-sans);color:var(--on-brand);background:var(--fg-tertiary)}.so-msg__body{flex:1;min-width:0}.so-msg__title{display:block;color:var(--fg);font-weight:600;margin-bottom:2px}.so-msg__actions{display:flex;gap:var(--space-6);margin-top:var(--space-10)}.so-msg--info{background:var(--brand-subtle)}.so-msg--info .so-msg__icon{background:var(--brand)}.so-msg--positive{background:var(--positive-surface)}.so-msg--positive .so-msg__icon{background:var(--positive)}.so-msg--caution{background:var(--cautionary-surface)}.so-msg--caution .so-msg__icon{background:var(--cautionary)}.so-msg--negative{background:var(--negative-surface)}.so-msg--negative .so-msg__icon{background:var(--negative)}.so-section-head{display:flex;align-items:center;gap:var(--space-6);font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}.so-section-head__count{color:var(--brand-text)}.so-section-head__spacer{flex:1}.so-table-wrap{border:1px solid var(--line-secondary);border-radius:var(--radius-12);overflow:auto;max-height:228px}.so-table{border-collapse:collapse;width:100%;font-size:12px;line-height:16px;letter-spacing:.0252em}.so-table th{position:sticky;top:0;background:var(--bg-secondary);color:var(--fg-tertiary);font-weight:500;text-align:left;padding:var(--space-8);border-bottom:1px solid var(--line-secondary);white-space:nowrap}.so-table td{padding:var(--space-8);border-bottom:1px solid var(--line-tertiary);vertical-align:top;color:var(--fg-secondary)}.so-table tr:last-child td{border-bottom:0}.so-table .so-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.so-table .so-sub{display:block;color:var(--fg-tertiary);font-size:11px;line-height:14px;margin-top:2px}.so-table tr.is-selected td{background:var(--brand-subtle)}.so-up{color:var(--brand-text);font-weight:600}.so-down{color:var(--negative-text);font-weight:600}.so-tag{display:inline-flex;height:20px;align-items:center;padding:0 var(--space-6);border-radius:var(--radius-6);font-size:11px;font-weight:600;white-space:nowrap}.so-tag--on{background:var(--brand-subtle);color:var(--brand-text)}.so-tag--paused{background:var(--cautionary-surface);color:var(--cautionary-text)}.so-tag--ended{background:var(--surface-secondary);color:var(--fg-tertiary)}.so-tag--error{background:var(--negative-surface);color:var(--negative-text)}.so-hint{font-size:12px;line-height:16px;color:var(--fg-tertiary);letter-spacing:.0252em}.so-log{border-top:1px solid var(--line-tertiary);padding-top:var(--space-10)}.so-log>summary{cursor:pointer;font-size:13px;line-height:18px;font-weight:600;color:var(--fg-secondary);list-style:none}.so-log>summary::-webkit-details-marker{display:none}.so-log>summary::before{content:"▸";display:inline-block;margin-right:var(--space-6);color:var(--fg-tertiary);transition:transform .15s}.so-log[open]>summary::before{transform:rotate(90deg)}.so-log__box{margin-top:var(--space-8);background:var(--bg-secondary);border-radius:var(--radius-10);padding:var(--space-10);max-height:150px;overflow:auto;font:12px/18px var(--font-mono);color:var(--fg-secondary);white-space:pre-wrap}.so-log__box .is-error{color:var(--negative-text)}.so-panel__body>*{flex-shrink:0}.so-view{display:flex;flex-direction:column;gap:var(--space-12)}.so-view:empty,.so-slot:empty{display:none}.so-row{display:flex;gap:var(--space-6);flex-wrap:wrap;align-items:center}.so-grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-8)}.so-grow{flex:1;min-width:0}.so-field{display:flex;flex-direction:column;gap:var(--space-4);min-width:0}.so-field__label{font-size:12px;line-height:16px;font-weight:600;letter-spacing:.0252em;color:var(--fg-secondary)}.so-input,.so-textarea{width:100%;min-height:var(--control-sm);border:0;border-radius:var(--radius-10);box-shadow:inset 0 0 0 1px var(--line);background:var(--bg);color:var(--fg);padding:7px var(--space-10);font:400 13px/18px var(--font-sans);letter-spacing:.0194em;outline:none}.so-input::placeholder,.so-textarea::placeholder{color:var(--fg-quaternary)}.so-input:focus,.so-textarea:focus{box-shadow:inset 0 0 0 1px var(--brand),var(--shadow-focus)}.so-textarea{min-height:92px;resize:vertical;font-family:var(--font-mono);font-size:12px;letter-spacing:0}.so-input--date{width:108px;font-variant-numeric:tabular-nums}.so-check{display:flex;gap:var(--space-8);align-items:center;font-size:12px;line-height:16px;letter-spacing:.0252em;color:var(--fg-secondary);cursor:pointer}.so-picks{border:1px solid var(--line-secondary);border-radius:var(--radius-12);overflow:auto;max-height:228px}.so-pick{display:flex;gap:var(--space-8);padding:var(--space-8);border-bottom:1px solid var(--line-tertiary);font-size:12px;line-height:16px;letter-spacing:.0252em;color:var(--fg-secondary);cursor:pointer}.so-pick:last-child{border-bottom:0}.so-pick b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}.so-pick .so-sub{display:block;color:var(--fg-tertiary);font-size:11px;line-height:14px;margin-top:2px}.so-pick.is-off{cursor:default}.so-empty{padding:var(--space-12);font-size:12px;line-height:16px;color:var(--fg-tertiary);text-align:center}.so-msg__text{white-space:pre-wrap}.so-msg__actions{flex-wrap:wrap}.so-msg__list{margin-top:var(--space-10);padding-top:var(--space-10);border-top:1px solid var(--line-tertiary);max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:var(--space-6);font-size:12px;line-height:16px}.so-msg__pre{margin:var(--space-8) 0 0;max-height:150px;overflow:auto;white-space:pre-wrap;font:12px/18px var(--font-mono);color:var(--fg-secondary)}`/*SO-UI:END*/;
+  root.innerHTML = `<style>${SO_UI_CSS}</style>
+<div class="so-panel">
+  <div class="so-panel__head"><div class="so-panel__title"><span class="so-panel__dot"></span>${TITLE}<span class="so-chip">${VER}</span><span class="so-chip so-chip--neutral">SJ와니 · AM</span></div>
+    <button class="so-icon-btn" id="min" title="접기">–</button><button class="so-icon-btn" id="x" title="닫기">×</button></div>
+  <div class="so-panel__body" id="body">
+    <div class="so-steps" id="steps"></div>
+    <button class="so-btn so-btn--md so-btn--primary so-btn--full" id="all">대상 추출하고 수량 맞추기</button>
+    <div class="so-grid2">
+      <button class="so-btn so-btn--sm so-btn--outlined" id="s1">① 대상 추출</button>
+      <button class="so-btn so-btn--sm so-btn--outlined" id="s2">② 조회·수량 적용</button>
+      <button class="so-btn so-btn--sm so-btn--primary" id="s3">③ 판매상태 저장</button>
+      <button class="so-btn so-btn--sm so-btn--outlined" id="s4" title="저장하지 않고 다시 조회해서 확인만 합니다">④ 점검만 다시</button>
     </div>
-    <div id="ask"></div>
-    <div id="view"></div>
-    <details id="logbox"><summary>진행 로그</summary><div class="log" id="log"></div></details>
-    <div class="foot">
-      <button class="btn xs text" id="cp">보고 복사</button>
-      <button class="btn xs text" id="csv">CSV 저장</button>
-      <button class="btn xs assist" id="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button>
+    <div id="ask" class="so-slot"></div>
+    <div id="view" class="so-view"></div>
+    <details class="so-log" id="logbox"><summary>진행 로그</summary><div class="so-log__box" id="log"></div></details>
+    <div class="so-panel__foot">
+      <button class="so-btn so-btn--xs so-btn--text" id="cp">보고 복사</button>
+      <button class="so-btn so-btn--xs so-btn--text" id="csv">CSV 저장</button>
+      <button class="so-btn so-btn--xs so-btn--assistive" id="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button>
     </div>
   </div>
 </div>`;
@@ -568,14 +481,14 @@ details[open] summary::before{transform:rotate(90deg)}
     const line = `${tnow()} ${m}`;
     D.logs.push(line); if (D.logs.length > 300) D.logs.shift();
     if (err) D.errors.push(`[${tnow()}] (${D.step}) ${m}`);
-    const div = document.createElement('div'); div.textContent = line; if (err) div.className = 'e';
+    const div = document.createElement('div'); div.textContent = line; if (err) div.className = 'is-error';
     $('log').appendChild(div); $('log').scrollTop = $('log').scrollHeight;
   }
   // 패널 안 확인창 (되돌리기 어려운 동작·사용자 처리 대기)
   function ask(kind, title, body, yes, no) {
     return new Promise(res => {
-      $('ask').innerHTML = `<div class="msg ${kind}"><span class="dot">${kind === 'brand' ? '?' : '!'}</span><div class="c"><strong>${esc(title)}</strong>${body}
-        <div class="act"><button class="btn sm primary" id="ay">${esc(yes)}</button>${no ? `<button class="btn sm assist" id="an">${esc(no)}</button>` : ''}</div></div></div>`;
+      $('ask').innerHTML = `<div class="so-msg so-msg--${kind}"><span class="so-msg__icon">${kind === 'info' ? '?' : '!'}</span><div class="so-msg__body"><strong class="so-msg__title">${esc(title)}</strong>${body}
+        <div class="so-msg__actions"><button class="so-btn so-btn--sm so-btn--primary" id="ay">${esc(yes)}</button>${no ? `<button class="so-btn so-btn--sm so-btn--assistive" id="an">${esc(no)}</button>` : ''}</div></div></div>`;
       const done = v => { $('ask').innerHTML = ''; res(v); };
       $('ay').onclick = () => done(true);
       if ($('an')) $('an').onclick = () => done(false);
@@ -584,52 +497,52 @@ details[open] summary::before{transform:rotate(90deg)}
   }
 
   function render() {
-    const stage = S.verify ? 4 : S.saved ? 3 : S.plan.length || S.rep.length || S.n ? 2 : S.codes.length ? 1 : 0;
+    const stage = S.verify ? 4 : S.plan.length || S.rep.length || S.n ? 2 : S.codes.length ? 1 : 0;
     $('steps').innerHTML = ['대상 추출', '수량 적용', '판매상태', '점검'].map((t, i) =>
-      `<div class="st ${i + 1 === stage + 1 ? 'on' : i < stage ? 'done' : ''}"><b></b>${i + 1}. ${t}</div>`).join('');
+      `<div class="so-step ${i + 1 === stage + 1 ? 'so-step--current' : i < stage ? 'so-step--done' : ''}">${'①②③④'[i]} ${t}</div>`).join('');
     const nq = S.plan.filter(p => p.qA !== p.qB).length, nt = S.plan.filter(p => p.fA !== p.fB).length;
     const nApplied = S.saved ? S.saved.plan.filter(p => p.qA !== p.qB).length : 0;
     let h = '';
     if (S.codes.length) {
-      h += `<div class="stats">
-        <div class="sc"><div class="k">대상 상품</div><div class="v">${S.codes.length}</div></div>
-        <div class="sc brand"><div class="k">수량 적용</div><div class="v">${S.n ? nApplied : '-'}</div></div>
-        <div class="sc brand"><div class="k">일시품절 대기</div><div class="v">${S.n ? nt : '-'}</div></div>
-        <div class="sc"><div class="k">재고있는 중지</div><div class="v">${S.n ? S.rep.length : '-'}</div></div></div>`;
+      h += `<div class="so-stats">
+        <div class="so-stat"><div class="so-stat__label">대상 상품</div><div class="so-stat__value">${S.codes.length}</div></div>
+        <div class="so-stat so-stat--brand"><div class="so-stat__label">수량 적용</div><div class="so-stat__value">${S.n ? nApplied : '-'}</div></div>
+        <div class="so-stat so-stat--brand"><div class="so-stat__label">일시품절 대기</div><div class="so-stat__value">${S.n ? nt : '-'}</div></div>
+        <div class="so-stat"><div class="so-stat__label">재고있는 중지</div><div class="so-stat__value">${S.n ? S.rep.length : '-'}</div></div></div>`;
     } else {
-      h += `<div class="msg brand"><span class="dot">i</span><div class="c"><strong>세일즈원 로그인 상태에서 바로 실행돼요</strong>위 버튼을 누르면 직매입 재고(S31) → 판매상태/수량관리 순서로 화면을 자동 조작합니다. 수량은 조회 직후 자동으로 맞추고, 판매상태 변경은 ③에서 확인 후에만 저장해요.</div></div>`;
+      h += `<div class="so-msg so-msg--info"><span class="so-msg__icon">i</span><div class="so-msg__body"><strong class="so-msg__title">세일즈원 로그인 상태에서 바로 실행돼요</strong>위 버튼을 누르면 직매입 재고(S31) → 판매상태/수량관리 순서로 화면을 자동 조작합니다. 수량은 조회 직후 자동으로 맞추고, 판매상태 변경은 ③에서 확인 후에만 저장해요.</div></div>`;
     }
     if (S.verify) {
       const v = S.verify, clean = !v.nf.length && !v.mism.length && !v.soLeft.length && !v.outside;
       const list = v.nf.map(p => `${p.prd} · ${p.nm} · ${p.attr} — ${p.why}`).concat(v.mism.map(p => `${p.prd} · ${p.nm} · ${p.attr} — 남은 불일치`));
-      h += `<div class="msg ${clean ? 'positive' : 'caution'}"><span class="dot">${clean ? '✓' : '!'}</span><div class="c"><strong>점검 ${clean ? '이상 없음' : '확인 필요'}</strong>
+      h += `<div class="so-msg so-msg--${clean ? 'positive' : 'caution'}"><span class="so-msg__icon">${clean ? '✓' : '!'}</span><div class="so-msg__body"><strong class="so-msg__title">점검 ${clean ? '이상 없음' : '확인 필요'}</strong>
         미반영 ${v.nf.length} · 남은 불일치 ${v.mism.length} · 판매중 0재고 ${v.soLeft.length} · 대상 외 수정 ${v.outside}
-        ${list.length ? '<div class="ml">' + list.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' : ''}</div></div>`;
+        ${list.length ? '<div class="so-msg__list">' + list.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' : ''}</div></div>`;
     }
-    if (nApplied && !S.verify) h += `<div class="msg positive"><span class="dot">✓</span><div class="c"><strong>수량 ${nApplied}건 자동 적용</strong>전체주문가능수량을 주문가능재고에 맞춰 저장했어요.${nq ? ` 아직 다른 ${nq}건은 아래 표에서 확인해주세요.` : ''}</div></div>`;
+    if (nApplied && !S.verify) h += `<div class="so-msg so-msg--positive"><span class="so-msg__icon">✓</span><div class="so-msg__body"><strong class="so-msg__title">수량 ${nApplied}건 자동 적용</strong>전체주문가능수량을 주문가능재고에 맞춰 저장했어요.${nq ? ` 아직 다른 ${nq}건은 아래 표에서 확인해주세요.` : ''}</div></div>`;
     if (S.plan.length && !S.verify) {
-      h += `<div class="sh">남은 변경 <span class="n">${S.plan.length}</span><span class="sp"></span><span class="hint">판매상태는 ③에서 확인 후 저장</span></div><div class="tw"><table><tr><th>상품</th><th>속성</th><th style="text-align:right">전체주문가능</th><th>판매상태</th></tr>`;
+      h += `<div class="so-section-head">남은 변경 <span class="so-section-head__count">${S.plan.length}</span><span class="so-section-head__spacer"></span><span class="so-hint">판매상태는 ③에서 확인 후 저장</span></div><div class="so-table-wrap"><table class="so-table"><tr><th>상품</th><th>속성</th><th class="so-num">전체주문가능</th><th>판매상태</th></tr>`;
       S.plan.forEach(p => {
-        const q = p.qA !== p.qB ? `${p.qB} → <span class="${p.qA > p.qB ? 'up' : 'dn'}">${p.qA}</span>` : p.qB;
-        const f = p.fA !== p.fB ? `<span class="tag ${p.fB}">${FLAG[p.fB]}</span> → <span class="tag ${p.fA}">${FLAG[p.fA]}</span>` : `<span class="tag ${p.fB}">${FLAG[p.fB]}</span>`;
-        h += `<tr><td>${esc(p.prd)}<span class="s">${esc(p.nm)}</span></td><td>${esc(p.a1)}/${esc(p.a2)}</td><td class="n">${q}</td><td>${f}</td></tr>`;
+        const q = p.qA !== p.qB ? `${p.qB} → <span class="${p.qA > p.qB ? 'so-up' : 'so-down'}">${p.qA}</span>` : p.qB;
+        const f = p.fA !== p.fB ? `<span class="so-tag so-tag--${TAG[p.fB]}">${FLAG[p.fB]}</span> → <span class="so-tag so-tag--${TAG[p.fA]}">${FLAG[p.fA]}</span>` : `<span class="so-tag so-tag--${TAG[p.fB]}">${FLAG[p.fB]}</span>`;
+        h += `<tr><td>${esc(p.prd)}<span class="so-sub">${esc(p.nm)}</span></td><td>${esc(p.a1)}/${esc(p.a2)}</td><td class="so-num">${q}</td><td>${f}</td></tr>`;
       });
       h += '</table></div>';
     } else if (S.n && !S.plan.length && !S.verify) {
-      h += `<div class="msg positive"><span class="dot">✓</span><div class="c"><strong>남은 변경이 없어요</strong>전체주문가능수량이 모두 주문가능재고와 같고, 바꿀 판매상태도 없어요.</div></div>`;
+      h += `<div class="so-msg so-msg--positive"><span class="so-msg__icon">✓</span><div class="so-msg__body"><strong class="so-msg__title">남은 변경이 없어요</strong>전체주문가능수량이 모두 주문가능재고와 같고, 바꿀 판매상태도 없어요.</div></div>`;
     }
     if (S.rep.length) {
       const np = S.rep.filter(r => r.pick).length;
-      h += `<div class="sh">재고 있는데 판매종료·일시품절 <span class="n">${S.rep.length}</span><span class="sp"></span>
-        <button class="btn xs text" id="pt">일시품절만</button><button class="btn xs text" id="pa">전체</button><button class="btn xs text" id="pn">해제</button></div>
-        <div class="tw"><table><tr><th><input type="checkbox" class="cb" id="pall"${np && np === S.rep.length ? ' checked' : ''}></th><th>상품</th><th>속성</th><th>상태</th><th style="text-align:right">수량</th></tr>`;
+      h += `<div class="so-section-head">재고 있는데 판매종료·일시품절 <span class="so-section-head__count">${S.rep.length}</span><span class="so-section-head__spacer"></span>
+        <button class="so-btn so-btn--xs so-btn--text" id="pt">일시품절만</button><button class="so-btn so-btn--xs so-btn--text" id="pa">전체</button><button class="so-btn so-btn--xs so-btn--text" id="pn">해제</button></div>
+        <div class="so-table-wrap"><table class="so-table"><tr><th><input type="checkbox" class="so-checkbox" id="pall"${np && np === S.rep.length ? ' checked' : ''}></th><th>상품</th><th>속성</th><th>상태</th><th class="so-num">수량</th></tr>`;
       S.rep.forEach((r, i) => {
-        h += `<tr class="${r.pick ? 'pk' : ''}"><td><input type="checkbox" class="cb" data-i="${i}"${r.pick ? ' checked' : ''}></td><td>${esc(r.prd)}<span class="s">${esc(r.nm)} · ${esc(r.attr)}</span></td><td>${esc(r.a1)}/${esc(r.a2)}</td><td><span class="tag ${r.f}">${FLAG[r.f]}</span></td><td class="n">${esc(r.q)}</td></tr>`;
+        h += `<tr class="${r.pick ? 'is-selected' : ''}"><td><input type="checkbox" class="so-checkbox" data-i="${i}"${r.pick ? ' checked' : ''}></td><td>${esc(r.prd)}<span class="so-sub">${esc(r.nm)} · ${esc(r.attr)}</span></td><td>${esc(r.a1)}/${esc(r.a2)}</td><td><span class="so-tag so-tag--${TAG[r.f]}">${FLAG[r.f]}</span></td><td class="so-num">${esc(r.q)}</td></tr>`;
       });
-      h += `</table></div><div class="hint">체크한 ${np}건은 ③ 판매상태 저장 때 판매중으로 바뀌어요. 일시품절 → 품절해제(저장 후 판매중) · 판매종료 → 판매중${S.rep.some(r => r.pick && r.f === 'Y') ? ' <b style="color:var(--neg-strong)">· 판매종료 전환은 아직 실사용 검증 전이에요</b>' : ''}</div>`;
+      h += `</table></div><div class="so-hint">체크한 ${np}건은 ③ 판매상태 저장 때 판매중으로 바뀌어요. 일시품절 → 품절해제(저장 후 판매중) · 판매종료 → 판매중${S.rep.some(r => r.pick && r.f === 'Y') ? ' <b style="color:var(--negative-text)">· 판매종료 전환은 아직 실사용 검증 전이에요</b>' : ''}</div>`;
     }
     $('view').innerHTML = h;
-    root.querySelectorAll('.cb[data-i]').forEach(cb => cb.onchange = () => { S.rep[+cb.dataset.i].pick = cb.checked; persist(); render(); });
+    root.querySelectorAll('.so-checkbox[data-i]').forEach(cb => cb.onchange = () => { S.rep[+cb.dataset.i].pick = cb.checked; persist(); render(); });
     const setAll = fn => { S.rep.forEach(r => (r.pick = fn(r))); persist(); render(); };
     if ($('pall')) $('pall').onchange = e => setAll(() => e.target.checked);
     if ($('pa')) $('pa').onclick = () => setAll(() => true);
@@ -646,9 +559,9 @@ details[open] summary::before{transform:rotate(90deg)}
     if (busy) return; busy = true;
     const b = $(id), label = b.innerHTML;
     ACT.forEach(x => ($(x).disabled = true));
-    b.innerHTML = `<span class="spin" style="${b.classList.contains('primary') ? '' : 'border-color:var(--brand-line);border-top-color:var(--brand)'}"></span>${label}`;
+    b.innerHTML = `<span class="so-spinner"></span>${label}`;
     $('logbox').open = true;
-    try { await fn(); } catch (e) { log('오류: ' + (e && e.message || e), true); $('ask').innerHTML = `<div class="msg negative"><span class="dot">!</span><div class="c"><strong>멈췄어요</strong>${esc(e && e.message || e)}<br>[진단 내용 복사]를 눌러 Claude에게 붙여넣어 주세요.</div></div>`; }
+    try { await fn(); } catch (e) { log('오류: ' + (e && e.message || e), true); $('ask').innerHTML = `<div class="so-msg so-msg--negative"><span class="so-msg__icon">!</span><div class="so-msg__body"><strong class="so-msg__title">멈췄어요</strong>${esc(e && e.message || e)}<br>[진단 내용 복사]를 눌러 Claude에게 붙여넣어 주세요.</div></div>`; }
     busy = false; b.innerHTML = label;
     ACT.forEach(x => ($(x).disabled = false));
     render();
@@ -668,7 +581,7 @@ details[open] summary::before{transform:rotate(90deg)}
   $('x').onclick = () => host.remove();
   $('min').onclick = () => { const b = $('body'); b.style.display = b.style.display === 'none' ? '' : 'none'; };
   (() => { // 드래그
-    const h = root.querySelector('.h'); let sx, sy, ox, oy;
+    const h = root.querySelector('.so-panel__head'); let sx, sy, ox, oy;
     h.onmousedown = e => {
       if (e.target.tagName === 'BUTTON') return;
       sx = e.clientX; sy = e.clientY; const r = host.getBoundingClientRect(); ox = r.left; oy = r.top;

@@ -1,5 +1,5 @@
 /* =========================================================================
- * [세일즈원 자동화] 장기무이자(무10) 세팅 v1.0.2
+ * [세일즈원 자동화] 장기무이자(무10) 세팅 v1.1
  *  - 상품조회/수정 > 가격/프로모션 기능을 세일즈원 API로 처리 (화면과 동일한 요청)
  *  - 직매입 : 기존 무이자 종료 → 200,000 → 무10(당사100) → 가격 원복 → 기존 무이자 복구
  *  - 위수탁 : [1단계] 기존 무이자 종료 → 200,000 예약 → 무10(당사50/업체50) 합의요청
@@ -10,7 +10,7 @@
 (async () => {
   'use strict';
   const TITLE = '장기무이자 세팅 자동화';
-  const VER = 'v1.0.2';
+  const VER = 'v1.1';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__NIF_FRESH) {
     try {
@@ -302,61 +302,80 @@
     log(cd, `기존 무이자 ${a.old.mm}개월(업체${a.old.sup}) 복구 ${short(win.rs)}~ ${ok(r) ? (a.old.sup > 0 ? '합의요청' : '완료') : '실패: ' + msg(r)}`, a.old.sup > 0 && ok(r));
   }
 
-  /* ---------------- UI ---------------- */
-  const css = `
-#${PANEL_ID}{position:fixed;top:70px;right:20px;width:560px;max-height:84vh;z-index:2147483000;background:#fff;border:1px solid #cfd6d2;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);font:13px/1.45 'Pretendard','Malgun Gothic',sans-serif;color:#222;display:flex;flex-direction:column}
-#${PANEL_ID} *{box-sizing:border-box}
-#${PANEL_ID} .h{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#1f8f5f;color:#fff;border-radius:10px 10px 0 0;cursor:move}
-#${PANEL_ID} .h b{font-size:14px}#${PANEL_ID} .x{background:none;border:0;color:#fff;font-size:18px;cursor:pointer}
-#${PANEL_ID} .b{padding:12px 14px;overflow:auto}
-#${PANEL_ID} label{display:block;font-weight:600;margin:8px 0 4px}
-#${PANEL_ID} textarea,#${PANEL_ID} input{width:100%;border:1px solid #cfd6d2;border-radius:6px;padding:6px 8px;font:inherit}
-#${PANEL_ID} textarea{height:110px;font-family:Consolas,monospace}
-#${PANEL_ID} .row{display:flex;gap:8px}#${PANEL_ID} .row>div{flex:1}
-#${PANEL_ID} .btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-#${PANEL_ID} button.a{border:1px solid #1f8f5f;background:#fff;color:#1f8f5f;border-radius:6px;padding:6px 10px;cursor:pointer;font-weight:600}
-#${PANEL_ID} button.a.p{background:#1f8f5f;color:#fff}#${PANEL_ID} button.a:disabled{opacity:.4;cursor:default}
-#${PANEL_ID} table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
-#${PANEL_ID} th,#${PANEL_ID} td{border:1px solid #e2e6e4;padding:4px 6px;text-align:left;vertical-align:top}
-#${PANEL_ID} th{background:#f3f6f4}
-#${PANEL_ID} .log{margin-top:10px;background:#f7f8f7;border:1px solid #e2e6e4;border-radius:6px;padding:8px;max-height:220px;overflow:auto;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap}
-#${PANEL_ID} .agree{margin-top:10px;border:1px solid #f0b400;background:#fffaf0;border-radius:6px;padding:8px;display:none}
-#${PANEL_ID} .hint{color:#777;font-size:12px;margin-top:4px}`;
-  const style = document.createElement('style'); style.textContent = css;
-  const el = document.createElement('div'); el.id = PANEL_ID; el.appendChild(style);
-  el.insertAdjacentHTML('beforeend', `
-<div class="h"><b>${TITLE} <small>${VER}</small></b><button class="x" title="닫기">×</button></div>
-<div class="b">
-  <label>상품코드 (한 줄에 하나, 직매입/위수탁은 자동 판별)</label>
-  <textarea id="nif-codes" placeholder="1131710679&#10;1131688507"></textarea>
-  <div class="row">
-    <div><label>방송 시작</label><input id="nif-bs" placeholder="2026-11-06 09:25"></div>
-    <div><label>방송 종료</label><input id="nif-be" placeholder="2026-11-06 11:35"></div>
+  /* ---------------- UI (세일즈원 자동화 UI 디자인 시스템) ---------------- */
+  if (!document.getElementById('__so_font')) {
+    const lk = document.createElement('link'); lk.id = '__so_font'; lk.rel = 'stylesheet';
+    lk.href = 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css';
+    document.head.appendChild(lk);
+  }
+  // 디자인 시스템 CSS: design/so-ui.css → scripts/inject-design.js 가 아래 표식 사이를 채운다 (직접 고치지 않는다)
+  const SO_UI_CSS = /*SO-UI:BEGIN*/`:host{all:initial;--brand:#0088FF;--brand-strong:#0077E6;--brand-heavy:#0066C7;--brand-text:#0070D6;--brand-subtle:rgba(0,136,255,0.05);--brand-line:rgba(0,136,255,0.28);--brand-focus:rgba(0,136,255,0.12);--fg:#171719;--fg-secondary:rgba(46,47,51,0.88);--fg-tertiary:rgba(55,56,60,0.61);--fg-quaternary:rgba(55,56,60,0.28);--fg-disable:rgba(55,56,60,0.16);--on-brand:#FFFFFF;--bg:#FFFFFF;--bg-secondary:#F7F7F8;--surface-secondary:rgba(112,115,124,0.08);--surface-tertiary:rgba(112,115,124,0.05);--surface-disable:#F4F4F5;--line:rgba(112,115,124,0.22);--line-secondary:rgba(112,115,124,0.16);--line-tertiary:rgba(112,115,124,0.08);--positive:#00BF40;--positive-text:#006E25;--positive-surface:rgba(0,191,64,0.08);--cautionary:#FF9200;--cautionary-text:#9C5800;--cautionary-surface:rgba(255,146,0,0.08);--negative:#FF4242;--negative-text:#E52222;--negative-surface:rgba(255,66,66,0.08);--dimmer:rgba(23,23,25,0.52);--font-sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;--font-mono:ui-monospace,SFMono-Regular,Consolas,monospace;--space-4:4px;--space-6:6px;--space-8:8px;--space-10:10px;--space-12:12px;--space-16:16px;--space-18:18px;--radius-5:5px;--radius-6:6px;--radius-8:8px;--radius-10:10px;--radius-12:12px;--radius-16:16px;--radius-full:9999px;--shadow-panel:0px 6px 10px -4px rgba(23,23,23,0.08),0px 16px 24px -6px rgba(23,23,23,0.08);--shadow-focus:0px 0px 0px 3px rgba(0,136,255,0.12);--panel-width:452px;--control-xs:28px;--control-sm:32px;--control-md:40px;--checkbox:20px;--z-panel:2147483000}.so-panel{font-family:var(--font-sans);color:var(--fg);width:var(--panel-width);max-height:84vh;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line-secondary);border-radius:var(--radius-16);box-shadow:var(--shadow-panel);overflow:hidden;-webkit-font-smoothing:antialiased;box-sizing:border-box}.so-panel *{box-sizing:border-box}.so-panel__head{display:flex;align-items:center;gap:var(--space-8);padding:14px 12px 14px var(--space-18);border-bottom:1px solid var(--line-tertiary);cursor:move;user-select:none}.so-panel__title{flex:1;min-width:0;font-size:17px;line-height:24px;font-weight:600}.so-panel__dot{display:inline-block;width:8px;height:8px;border-radius:var(--radius-full);background:var(--brand);margin-right:var(--space-8);vertical-align:2px}.so-panel__body{padding:var(--space-16) var(--space-18) var(--space-18);overflow:auto;display:flex;flex-direction:column;gap:var(--space-12)}.so-panel__foot{display:flex;gap:var(--space-4);justify-content:flex-end;flex-wrap:wrap}.so-chip{display:inline-flex;align-items:center;height:20px;padding:0 var(--space-6);border-radius:var(--radius-6);background:var(--brand-subtle);color:var(--brand-text);font-size:11px;line-height:14px;font-weight:600;letter-spacing:.0311em;vertical-align:2px;margin-left:var(--space-4)}.so-chip--neutral{background:var(--surface-secondary);color:var(--fg-tertiary)}.so-icon-btn{width:var(--control-sm);height:var(--control-sm);border:0;border-radius:var(--radius-10);background:transparent;color:var(--fg-tertiary);font:500 18px/1 var(--font-sans);cursor:pointer}.so-icon-btn:hover{background:var(--surface-secondary);color:var(--fg)}.so-btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-4);border:0;cursor:pointer;font-family:var(--font-sans);font-weight:600;white-space:nowrap;transition:background .12s,box-shadow .12s}.so-btn--md{min-height:var(--control-md);padding:10px 16px;border-radius:var(--radius-12);font-size:14px;line-height:20px;letter-spacing:.0145em}.so-btn--sm{min-height:var(--control-sm);padding:8px 12px;border-radius:var(--radius-10);font-size:12px;line-height:16px;letter-spacing:.0252em}.so-btn--xs{min-height:var(--control-xs);padding:6px 10px;border-radius:var(--radius-8);font-size:12px;line-height:16px}.so-btn--primary{background:var(--brand);color:var(--on-brand)}.so-btn--primary:hover{background:var(--brand-strong)}.so-btn--primary:active{background:var(--brand-heavy)}.so-btn--outlined{background:var(--bg);color:var(--brand-text);box-shadow:inset 0 0 0 1px var(--line)}.so-btn--outlined:hover{background:var(--brand-subtle)}.so-btn--assistive{background:var(--surface-secondary);color:var(--fg-secondary)}.so-btn--text{background:transparent;color:var(--fg-tertiary);padding-left:var(--space-6);padding-right:var(--space-6)}.so-btn--text:hover{color:var(--fg)}.so-btn--full{width:100%}.so-btn:disabled{background:var(--surface-disable);color:var(--fg-disable);box-shadow:none;cursor:default}.so-btn:focus-visible,.so-checkbox:focus-visible{outline:none;box-shadow:var(--shadow-focus)}.so-spinner{width:14px;height:14px;border:2px solid var(--brand-line);border-top-color:var(--brand);border-radius:var(--radius-full);animation:so-spin .8s linear infinite}.so-btn--primary .so-spinner{border-color:rgba(255,255,255,.4);border-top-color:var(--on-brand)}@keyframes so-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.so-spinner{animation-duration:2.4s}}.so-checkbox{appearance:none;-webkit-appearance:none;width:var(--checkbox);height:var(--checkbox);margin:0;border-radius:var(--radius-5);box-shadow:inset 0 0 0 1.5px var(--line);background:var(--bg);cursor:pointer;display:inline-grid;place-items:center;vertical-align:middle}.so-checkbox:checked{background:var(--brand);box-shadow:none}.so-checkbox:checked::after{content:"";width:10px;height:6px;border-left:2px solid var(--on-brand);border-bottom:2px solid var(--on-brand);transform:translateY(-1px) rotate(-45deg)}.so-checkbox:disabled{background:var(--surface-disable);box-shadow:none;cursor:default}.so-steps{display:flex;gap:var(--space-4)}.so-step{flex:1;display:flex;flex-direction:column;gap:var(--space-4);font-size:11px;line-height:14px;font-weight:500;color:var(--fg-tertiary);letter-spacing:.0311em}.so-step::before{content:"";display:block;height:4px;border-radius:var(--radius-full);background:var(--surface-secondary)}.so-step--done::before{background:var(--brand-line)}.so-step--current{color:var(--brand-text)}.so-step--current::before{background:var(--brand)}.so-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-6)}.so-stat{background:var(--bg-secondary);border-radius:var(--radius-12);padding:10px 10px 9px;min-width:0}.so-stat__label{font-size:11px;line-height:14px;color:var(--fg-tertiary);font-weight:500;letter-spacing:.0311em}.so-stat__value{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.012em;font-variant-numeric:tabular-nums}.so-stat--brand .so-stat__value{color:var(--brand)}.so-msg{display:flex;gap:var(--space-10);padding:var(--space-12) 14px;border-radius:var(--radius-12);font-size:13px;line-height:18px;letter-spacing:.0194em;background:var(--surface-tertiary);color:var(--fg-secondary)}.so-msg__icon{flex:none;width:18px;height:18px;border-radius:var(--radius-full);display:grid;place-items:center;font:700 11px/1 var(--font-sans);color:var(--on-brand);background:var(--fg-tertiary)}.so-msg__body{flex:1;min-width:0}.so-msg__title{display:block;color:var(--fg);font-weight:600;margin-bottom:2px}.so-msg__actions{display:flex;gap:var(--space-6);margin-top:var(--space-10)}.so-msg--info{background:var(--brand-subtle)}.so-msg--info .so-msg__icon{background:var(--brand)}.so-msg--positive{background:var(--positive-surface)}.so-msg--positive .so-msg__icon{background:var(--positive)}.so-msg--caution{background:var(--cautionary-surface)}.so-msg--caution .so-msg__icon{background:var(--cautionary)}.so-msg--negative{background:var(--negative-surface)}.so-msg--negative .so-msg__icon{background:var(--negative)}.so-section-head{display:flex;align-items:center;gap:var(--space-6);font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}.so-section-head__count{color:var(--brand-text)}.so-section-head__spacer{flex:1}.so-table-wrap{border:1px solid var(--line-secondary);border-radius:var(--radius-12);overflow:auto;max-height:228px}.so-table{border-collapse:collapse;width:100%;font-size:12px;line-height:16px;letter-spacing:.0252em}.so-table th{position:sticky;top:0;background:var(--bg-secondary);color:var(--fg-tertiary);font-weight:500;text-align:left;padding:var(--space-8);border-bottom:1px solid var(--line-secondary);white-space:nowrap}.so-table td{padding:var(--space-8);border-bottom:1px solid var(--line-tertiary);vertical-align:top;color:var(--fg-secondary)}.so-table tr:last-child td{border-bottom:0}.so-table .so-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.so-table .so-sub{display:block;color:var(--fg-tertiary);font-size:11px;line-height:14px;margin-top:2px}.so-table tr.is-selected td{background:var(--brand-subtle)}.so-up{color:var(--brand-text);font-weight:600}.so-down{color:var(--negative-text);font-weight:600}.so-tag{display:inline-flex;height:20px;align-items:center;padding:0 var(--space-6);border-radius:var(--radius-6);font-size:11px;font-weight:600;white-space:nowrap}.so-tag--on{background:var(--brand-subtle);color:var(--brand-text)}.so-tag--paused{background:var(--cautionary-surface);color:var(--cautionary-text)}.so-tag--ended{background:var(--surface-secondary);color:var(--fg-tertiary)}.so-tag--error{background:var(--negative-surface);color:var(--negative-text)}.so-hint{font-size:12px;line-height:16px;color:var(--fg-tertiary);letter-spacing:.0252em}.so-log{border-top:1px solid var(--line-tertiary);padding-top:var(--space-10)}.so-log>summary{cursor:pointer;font-size:13px;line-height:18px;font-weight:600;color:var(--fg-secondary);list-style:none}.so-log>summary::-webkit-details-marker{display:none}.so-log>summary::before{content:"▸";display:inline-block;margin-right:var(--space-6);color:var(--fg-tertiary);transition:transform .15s}.so-log[open]>summary::before{transform:rotate(90deg)}.so-log__box{margin-top:var(--space-8);background:var(--bg-secondary);border-radius:var(--radius-10);padding:var(--space-10);max-height:150px;overflow:auto;font:12px/18px var(--font-mono);color:var(--fg-secondary);white-space:pre-wrap}.so-log__box .is-error{color:var(--negative-text)}.so-panel__body>*{flex-shrink:0}.so-view{display:flex;flex-direction:column;gap:var(--space-12)}.so-view:empty,.so-slot:empty{display:none}.so-row{display:flex;gap:var(--space-6);flex-wrap:wrap;align-items:center}.so-grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-8)}.so-grow{flex:1;min-width:0}.so-field{display:flex;flex-direction:column;gap:var(--space-4);min-width:0}.so-field__label{font-size:12px;line-height:16px;font-weight:600;letter-spacing:.0252em;color:var(--fg-secondary)}.so-input,.so-textarea{width:100%;min-height:var(--control-sm);border:0;border-radius:var(--radius-10);box-shadow:inset 0 0 0 1px var(--line);background:var(--bg);color:var(--fg);padding:7px var(--space-10);font:400 13px/18px var(--font-sans);letter-spacing:.0194em;outline:none}.so-input::placeholder,.so-textarea::placeholder{color:var(--fg-quaternary)}.so-input:focus,.so-textarea:focus{box-shadow:inset 0 0 0 1px var(--brand),var(--shadow-focus)}.so-textarea{min-height:92px;resize:vertical;font-family:var(--font-mono);font-size:12px;letter-spacing:0}.so-input--date{width:108px;font-variant-numeric:tabular-nums}.so-check{display:flex;gap:var(--space-8);align-items:center;font-size:12px;line-height:16px;letter-spacing:.0252em;color:var(--fg-secondary);cursor:pointer}.so-picks{border:1px solid var(--line-secondary);border-radius:var(--radius-12);overflow:auto;max-height:228px}.so-pick{display:flex;gap:var(--space-8);padding:var(--space-8);border-bottom:1px solid var(--line-tertiary);font-size:12px;line-height:16px;letter-spacing:.0252em;color:var(--fg-secondary);cursor:pointer}.so-pick:last-child{border-bottom:0}.so-pick b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}.so-pick .so-sub{display:block;color:var(--fg-tertiary);font-size:11px;line-height:14px;margin-top:2px}.so-pick.is-off{cursor:default}.so-empty{padding:var(--space-12);font-size:12px;line-height:16px;color:var(--fg-tertiary);text-align:center}.so-msg__text{white-space:pre-wrap}.so-msg__actions{flex-wrap:wrap}.so-msg__list{margin-top:var(--space-10);padding-top:var(--space-10);border-top:1px solid var(--line-tertiary);max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:var(--space-6);font-size:12px;line-height:16px}.so-msg__pre{margin:var(--space-8) 0 0;max-height:150px;overflow:auto;white-space:pre-wrap;font:12px/18px var(--font-mono);color:var(--fg-secondary)}`/*SO-UI:END*/;
+  const el = document.createElement('div'); el.id = PANEL_ID;
+  el.style.cssText = 'position:fixed;top:72px;right:16px;z-index:2147483000;';
+  const root = el.attachShadow({ mode: 'open' });   // 세일즈원(MUI) 스타일과 섞이지 않게 Shadow DOM 안에 그린다
+  root.innerHTML = `<style>${SO_UI_CSS}</style>
+<div class="so-panel">
+  <div class="so-panel__head"><div class="so-panel__title"><span class="so-panel__dot"></span>${TITLE}<span class="so-chip">${VER}</span><span class="so-chip so-chip--neutral">무10</span></div>
+    <button class="so-icon-btn" id="nif-min" title="접기">–</button><button class="so-icon-btn" id="nif-x" title="닫기">×</button></div>
+  <div class="so-panel__body" id="nif-body">
+    <div class="so-steps" id="nif-steps"></div>
+    <label class="so-field"><span class="so-field__label">상품코드 (한 줄에 하나 · 직매입/위수탁은 자동 판별)</span>
+      <textarea class="so-textarea" id="nif-codes" placeholder="1131710679&#10;1131688507"></textarea></label>
+    <div class="so-grid2">
+      <label class="so-field"><span class="so-field__label">방송 시작</span><input class="so-input" id="nif-bs" placeholder="2026-11-06 09:25"></label>
+      <label class="so-field"><span class="so-field__label">방송 종료</span><input class="so-input" id="nif-be" placeholder="2026-11-06 11:35"></label>
+    </div>
+    <label class="so-field"><span class="so-field__label">위수탁 200,000 적용 시각 (비우면 방송 전날 03:00)</span>
+      <input class="so-input" id="nif-ra" placeholder="2026-11-05 03:00"></label>
+    <div class="so-hint">무10 구간은 방송 30분 전부터 30분 뒤까지예요. 기존 무이자는 그 1초 전에 끝내고, 끝난 다음 분부터 복구해요. 위수탁 가격은 마진 48%로 맞춰요.</div>
+    <div class="so-row">
+      <button class="so-btn so-btn--sm so-btn--outlined" id="nif-prev">① 미리보기</button>
+      <button class="so-btn so-btn--sm so-btn--primary" id="nif-run1" title="직매입 전체 · 위수탁 1단계" disabled>② 실행</button>
+      <button class="so-btn so-btn--sm so-btn--outlined" id="nif-run2" title="협력사 합의가 승인된 뒤" disabled>③ 위수탁 2단계</button>
+    </div>
+    <div class="so-hint">② 실행은 직매입 전체와 위수탁 1단계를 처리해요. ③ 위수탁 2단계는 협력사 합의가 승인된 뒤에 눌러요.</div>
+    <div id="nif-ask" class="so-slot"></div>
+    <div id="nif-table" class="so-view"></div>
+    <div id="nif-agree" class="so-slot"></div>
+    <details class="so-log" id="nif-logbox" open><summary>진행 로그</summary><div class="so-log__box" id="nif-log">상품코드와 방송시간을 넣고 ① 미리보기를 눌러주세요.</div></details>
+    <div class="so-panel__foot">
+      <button class="so-btn so-btn--xs so-btn--assistive" id="nif-diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button>
+    </div>
   </div>
-  <label>위수탁 200,000 적용 시각 (1단계, 비우면 방송 전날 03:00)</label>
-  <input id="nif-ra" placeholder="2026-11-05 03:00">
-  <div class="hint">무10 구간 = 방송 -30분 ~ +30분 · 기존 무이자는 그 1초 전 종료, 끝난 다음 분부터 복구 · 위수탁 가격은 마진 48%</div>
-  <div class="btns">
-    <button class="a" id="nif-prev">① 미리보기</button>
-    <button class="a p" id="nif-run1" disabled>② 실행 (직매입 전체 · 위수탁 1단계)</button>
-    <button class="a" id="nif-run2" disabled>③ 위수탁 2단계 (합의 승인 후)</button>
-    <button class="a" id="nif-diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button>
-  </div>
-  <div id="nif-table"></div>
-  <div class="agree" id="nif-agree"><b>협력사 합의 요청 필요</b> <button class="a" id="nif-copy" style="padding:2px 8px;margin-left:6px">복사</button><pre id="nif-agree-list" style="margin:6px 0 0;white-space:pre-wrap"></pre></div>
-  <div class="log" id="nif-log">상품코드와 방송시간을 넣고 ① 미리보기를 눌러주세요.</div>
-</div>`);
+</div>`;
   document.body.appendChild(el);
-  const $ = id => el.querySelector('#' + id);
-  el.querySelector('.x').onclick = () => el.remove();
+  const $ = id => root.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  $('nif-x').onclick = () => el.remove();
+  $('nif-min').onclick = () => { const b = $('nif-body'); b.style.display = b.style.display === 'none' ? '' : 'none'; };
   (() => { // 드래그
-    const h = el.querySelector('.h'); let sx, sy, ox, oy;
+    const h = root.querySelector('.so-panel__head'); let sx, sy, ox, oy;
     h.onmousedown = e => { if (e.target.tagName === 'BUTTON') return; sx = e.clientX; sy = e.clientY; const r = el.getBoundingClientRect(); ox = r.left; oy = r.top;
-      const mv = ev => { el.style.left = ox + ev.clientX - sx + 'px'; el.style.top = oy + ev.clientY - sy + 'px'; el.style.right = 'auto'; };
+      const mv = ev => { el.style.left = ox + ev.clientX - sx + 'px'; el.style.top = Math.max(0, oy + ev.clientY - sy) + 'px'; el.style.right = 'auto'; };
       const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
       document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up); };
   })();
   try { const s = JSON.parse(sessionStorage.getItem('__nif_inputs') || '{}'); if (s.c) $('nif-codes').value = s.c; if (s.bs) $('nif-bs').value = s.bs; if (s.be) $('nif-be').value = s.be; if (s.ra) $('nif-ra').value = s.ra; } catch (e) {}
+
+  // 단계 표시: 0 = ① 미리보기 차례, 1 = ② 실행 차례, 2 = ③ 위수탁 2단계 차례, 3 = 모두 끝
+  let stage = 0;
+  const renderSteps = () => {
+    $('nif-steps').innerHTML = ['① 미리보기', '② 실행', '③ 위수탁 2단계'].map((t, i) =>
+      `<div class="so-step ${i === stage ? 'so-step--current' : i < stage ? 'so-step--done' : ''}">${t}</div>`).join('');
+  };
+  renderSteps();
+
+  // 패널 안 확인창 (되돌리기 어려운 동작은 여기서 한 번 더 묻는다. 브라우저 confirm은 쓰지 않는다)
+  function ask(kind, title, body, yes, no) {
+    return new Promise(res => {
+      $('nif-ask').innerHTML = `<div class="so-msg so-msg--${kind}"><span class="so-msg__icon">${kind === 'info' ? '?' : '!'}</span><div class="so-msg__body"><strong class="so-msg__title">${esc(title)}</strong>${body}
+        <div class="so-msg__actions"><button class="so-btn so-btn--sm so-btn--primary" id="nif-ay">${esc(yes)}</button>${no ? `<button class="so-btn so-btn--sm so-btn--assistive" id="nif-an">${esc(no)}</button>` : ''}</div></div></div>`;
+      const done = v => { $('nif-ask').innerHTML = ''; res(v); };
+      $('nif-ay').onclick = () => done(true);
+      if ($('nif-an')) $('nif-an').onclick = () => done(false);
+      $('nif-ask').scrollIntoView({ block: 'nearest' });
+    });
+  }
 
   const logEl = $('nif-log');
   let agreeList = [];
@@ -368,8 +387,12 @@
     if (/실패|오류|⚠/.test(text)) S.errors.push(`[${tnow()}] (${S.step}) ${cd || ''} ${text}`);
     if (agree) { agreeList.push(`${cd}\t${names[cd] || ''}\t${text.replace(/ 합의요청$/, '')}`); showAgree(); }
   };
-  const showAgree = () => { $('nif-agree').style.display = agreeList.length ? 'block' : 'none'; $('nif-agree-list').textContent = agreeList.join('\n'); };
-  $('nif-copy').onclick = () => { navigator.clipboard.writeText(agreeList.join('\n')).then(() => { $('nif-copy').textContent = '복사됨'; setTimeout(() => $('nif-copy').textContent = '복사', 1200); }); };
+  const showAgree = () => {
+    $('nif-agree').innerHTML = agreeList.length ? `<div class="so-msg so-msg--caution"><span class="so-msg__icon">!</span><div class="so-msg__body"><strong class="so-msg__title">협력사 합의 요청이 필요해요 · ${agreeList.length}건</strong>아래 목록을 복사해서 협력사에 요청해 주세요.
+      <pre class="so-msg__pre">${esc(agreeList.join('\n'))}</pre>
+      <div class="so-msg__actions"><button class="so-btn so-btn--sm so-btn--assistive" id="nif-copy">합의 요청 목록 복사</button></div></div></div>` : '';
+    if ($('nif-copy')) $('nif-copy').onclick = () => { navigator.clipboard.writeText(agreeList.join('\n')).then(() => { const b = $('nif-copy'); if (!b) return; b.textContent = '복사했어요'; setTimeout(() => { if ($('nif-copy')) $('nif-copy').textContent = '합의 요청 목록 복사'; }, 1200); }); };
+  };
 
   let plan = null;
   function readInputs() {
@@ -383,15 +406,27 @@
     return { codes, win: windowOf(bs, be), ra };
   }
   function render(list, win) {
+    const okList = list.filter(a => !a.err);
+    const nD = okList.filter(a => !a.consign).length, nC = okList.filter(a => a.consign).length, nE = list.length - okList.length, n10 = okList.filter(a => a.has10).length;
     const rows = list.map(a => {
-      if (a.err) return `<tr><td>${a.cd}</td><td colspan="6" style="color:#c00">${a.err}</td></tr>`;
+      if (a.err) return `<tr><td>${esc(a.cd)}</td><td colspan="4"><span class="so-tag so-tag--error">오류</span> ${esc(a.err)}</td></tr>`;
       const old = a.old ? `${a.old.mm}개월 (업체${a.old.sup})` : '없음';
       const st = a.has10 ? '무10 등록됨' : (a.consign ? '1단계: 무10 합의요청' : '전체 진행');
-      const pr = a.has10 ? '-' : a.needRaise ? `200,000 → ${a.steps.map(n => n.toLocaleString()).join(' → ')}` : `변경 없음 (${Number(a.basePrc).toLocaleString()})`;
-      return `<tr><td>${a.cd}<br><small>${a.nm}</small></td><td>${a.consign ? '위수탁' : '직매입'}</td><td>${Number(a.cur.salePrc).toLocaleString()}</td><td>${old}</td><td>${pr}</td><td>${a.consign ? '50/50 (합의)' : '100/0'}</td><td>${st}</td></tr>`;
+      const pr = a.has10 ? '' : a.needRaise ? `가격 200,000 → ${a.steps.map(n => n.toLocaleString()).join(' → ')}` : `가격 변경 없음 (${Number(a.basePrc).toLocaleString()})`;
+      return `<tr><td>${esc(a.cd)}<span class="so-sub">${esc(a.nm)}</span></td>
+        <td><span class="so-tag so-tag--${a.consign ? 'ended' : 'on'}">${a.consign ? '위수탁' : '직매입'}</span></td>
+        <td class="so-num">${Number(a.cur.salePrc).toLocaleString()}</td>
+        <td>${old}<span class="so-sub">무10 분담 ${a.consign ? '50/50 (합의)' : '100/0'}</span></td>
+        <td>${st}${pr ? `<span class="so-sub">${pr}</span>` : ''}</td></tr>`;
     }).join('');
-    $('nif-table').innerHTML = `<table><tr><th>상품</th><th>형태</th><th>현재가</th><th>기존 무이자</th><th>가격</th><th>무10 당사/업체</th><th>할 일</th></tr>${rows}</table>
-<div class="hint">무10 ${short(win.s)} ~ ${short(win.e)} · 기존 종료 ${short(win.oldEnd)} · 복구 ${short(win.rs)}~</div>`;
+    $('nif-table').innerHTML = `<div class="so-stats">
+        <div class="so-stat so-stat--brand"><div class="so-stat__label">직매입</div><div class="so-stat__value">${nD}</div></div>
+        <div class="so-stat so-stat--brand"><div class="so-stat__label">위수탁</div><div class="so-stat__value">${nC}</div></div>
+        <div class="so-stat"><div class="so-stat__label">무10 등록됨</div><div class="so-stat__value">${n10}</div></div>
+        <div class="so-stat"><div class="so-stat__label">오류</div><div class="so-stat__value">${nE}</div></div></div>
+      <div class="so-section-head">미리보기 <span class="so-section-head__count">${list.length}</span></div>
+      <div class="so-table-wrap"><table class="so-table"><tr><th>상품</th><th>형태</th><th class="so-num">현재가</th><th>기존 무이자</th><th>할 일</th></tr>${rows}</table></div>
+      <div class="so-hint">무10 ${short(win.s)} ~ ${short(win.e)} · 기존 무이자 종료 ${short(win.oldEnd)} · 복구 ${short(win.rs)}~</div>`;
   }
   async function collect(codes, win) {
     const out = [];
@@ -441,6 +476,7 @@
       ta.remove();
     }
     console.log(text);
+    $('nif-logbox').open = true;
     logEl.textContent += '\n' + (done ? `📋 진단 내용을 복사했습니다(${text.length}자). Claude 대화창에 붙여넣어 주세요.` : '❗ 클립보드 복사 실패. F12 콘솔에 출력된 진단 내용을 복사해 주세요.');
     logEl.scrollTop = logEl.scrollHeight;
   };
@@ -455,22 +491,24 @@
       const list = await collect(inp.codes, inp.win);
       plan = { ...inp, list };
       render(list, inp.win);
+      stage = 1; renderSteps();
       const nC = list.filter(a => a.consign && !a.err).length, nD = list.filter(a => !a.consign && !a.err).length;
       logEl.textContent = `미리보기 완료: 직매입 ${nD} · 위수탁 ${nC} · 오류 ${list.filter(a => a.err).length}\n내용 확인 후 ② 실행`;
-    } catch (e) { logEl.textContent = '⚠ ' + e.message; S.errors.push(`[${tnow()}] (${S.step}) ${e.message}`); plan = null; }
+    } catch (e) { logEl.textContent = '⚠ ' + e.message; S.errors.push(`[${tnow()}] (${S.step}) ${e.message}`); plan = null; stage = 0; renderSteps(); }
     busy(false);
   };
-  async function runAll(stage) {
+  async function runAll(stg) {
     if (!plan) return;
     const { win, ra } = plan;
-    const target = plan.list.filter(a => !a.err && (stage === 1 || a.consign));
+    const target = plan.list.filter(a => !a.err && (stg === 1 || a.consign));
     if (!target.length) { logEl.textContent += '\n대상 없음'; return; }
-    const msgTxt = stage === 1
-      ? `직매입 ${target.filter(a => !a.consign).length}개 전체 진행 + 위수탁 ${target.filter(a => a.consign).length}개 무10 합의요청을 실행할까요?\n(직매입 20만 원 노출은 상품당 약 1분)`
-      : `위수탁 ${target.length}개 2단계(가격 원복 + 기존 무이자 복구)를 실행할까요?\n무10 미승인 상품은 자동으로 건너뜁니다.`;
-    if (!confirm('[' + TITLE + ']\n' + msgTxt)) return;
-    busy(true); agreeList = []; showAgree();
-    S.step = stage === 1 ? '② 실행' : '③ 위수탁 2단계';
+    const body = stg === 1
+      ? `직매입 ${target.filter(a => !a.consign).length}개는 전체 진행하고, 위수탁 ${target.filter(a => a.consign).length}개는 무10 합의요청을 보내요.<br>직매입 20만 원 노출은 상품당 약 1분이에요.`
+      : `위수탁 ${target.length}개의 가격 원복과 기존 무이자 복구를 진행해요.<br>무10이 승인되지 않은 상품은 자동으로 건너뛰어요.`;
+    busy(true);
+    if (!await ask('info', stg === 1 ? '② 실행할까요?' : '③ 위수탁 2단계를 실행할까요?', body, '실행', '취소')) { busy(false); return; }
+    agreeList = []; showAgree();
+    S.step = stg === 1 ? '② 실행' : '③ 위수탁 2단계';
     logEl.textContent = `${S.step} 시작`;
     try {
       if (!await ensureAuth(t => log('', t))) throw new Error('로그인 정보 만료 — 세일즈원에서 [조회]를 누른 뒤 다시 실행');
@@ -478,7 +516,7 @@
         try {
           const { d, dc } = await loadProduct(a0.cd);              // 실행 직전 최신 상태로 다시 계산
           const a = analyze(a0.cd, d, dc, win); a.d = d;
-          if (stage === 1) await (a.consign ? runConsign1(a, win, log, ra) : runDirect(a, win, log));
+          if (stg === 1) await (a.consign ? runConsign1(a, win, log, ra) : runDirect(a, win, log));
           else await runConsign2(a, win, log);
         } catch (e) { log(a0.cd, '오류: ' + e.message); }
       }
@@ -492,7 +530,8 @@
         const warn = last.salePrc === MIN_PRICE && a.basePrc < MIN_PRICE && !expected ? ' ⚠ 200,000이 마지막 가격으로 남아 있음 — 원복 확인 필요' : '';
         log(a.cd, `최종가 ${Number(last.salePrc).toLocaleString()}${a.consign ? ' (업체지급 ' + Number(last.supGivRtamt).toLocaleString() + ')' : ''} · 무10 ${a.has10 ? '등록' : (a.consign ? '합의 대기' : '없음')}${warn}`);
       }
-      log('', agreeList.length ? `완료 — 협력사 합의 요청 ${agreeList.length}건 (노란 상자 복사)` : '완료');
+      log('', agreeList.length ? `완료 — 협력사 합의 요청 ${agreeList.length}건 (주황 상자의 [합의 요청 목록 복사])` : '완료');
+      stage = Math.max(stage, stg === 1 ? 2 : 3); renderSteps();
     } catch (e) { log('', '⚠ ' + e.message); }
     busy(false);
   }

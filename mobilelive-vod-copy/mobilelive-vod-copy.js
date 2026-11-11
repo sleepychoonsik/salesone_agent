@@ -1,5 +1,5 @@
 /*
- * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.8  (변경 이력: CHANGELOG.md)
+ * 세일즈원 모바일라이브 [VOD] 편성상품 복사 자동화 v1.9  (변경 이력: CHANGELOG.md)
  *
  * 사용 위치: 세일즈원 > 아이템 편성 > 모바일라이브 탭 (프로그램명 '와니' 등으로 조회한 상태)
  * 하는 일:
@@ -15,7 +15,7 @@
  */
 (async () => {
   'use strict';
-  const VER = '1.8';
+  const VER = '1.9';
   const TOOL = '모바일라이브 VOD 편성상품 복사';
   const PANEL_ID = '__mlcopy_panel';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
@@ -431,38 +431,35 @@
   const BRAND_LABEL = { WANI: '와니' };
   const KW = '와니'; // 프로그램명 조회어 (SJ와니 전용)
 
-  // ---------- 패널 UI ----------
-  const css = `
-#${PANEL_ID}{position:fixed;top:70px;right:16px;width:440px;max-height:82vh;z-index:2147483647;background:#fff;border:2px solid #1e6fe8;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.25);font:13px/1.45 'Malgun Gothic',sans-serif;color:#222;display:flex;flex-direction:column}
-#${PANEL_ID} .h{background:#1e6fe8;color:#fff;padding:8px 12px;font-weight:bold;display:flex;justify-content:space-between;align-items:center;cursor:move;border-radius:7px 7px 0 0}
-#${PANEL_ID} .h button{background:none;border:0;color:#fff;font-size:16px;cursor:pointer}
-#${PANEL_ID} .b{padding:10px 12px;overflow:auto}
-#${PANEL_ID} .t{max-height:190px;overflow:auto;border:1px solid #ddd;border-radius:6px;margin:6px 0}
-#${PANEL_ID} .t label{display:flex;gap:6px;padding:4px 8px;border-bottom:1px solid #f0f0f0;cursor:pointer}
-#${PANEL_ID} .t label small{color:#888}
-#${PANEL_ID} .row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
-#${PANEL_ID} input:not([type]){border:1px solid #bbb;border-radius:4px;padding:2px 4px;font:inherit}
-#${PANEL_ID} .btn{padding:5px 10px;border:1px solid #1e6fe8;background:#fff;color:#1e6fe8;border-radius:5px;cursor:pointer;font:inherit}
-#${PANEL_ID} .btn.p{background:#1e6fe8;color:#fff}
-#${PANEL_ID} .btn.r{border-color:#d33;color:#d33}
-#${PANEL_ID} .btn:disabled{opacity:.4;cursor:default}
-#${PANEL_ID} .ask{display:none;background:#fff8e1;border:1px solid #f0c040;border-radius:6px;padding:8px;margin:6px 0;white-space:pre-wrap}
-#${PANEL_ID} .log{background:#f7f7f9;border:1px solid #e3e3e3;border-radius:6px;padding:6px;height:170px;overflow:auto;font:12px/1.4 Consolas,monospace;white-space:pre-wrap}
-`;
-  const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
-  const P = document.createElement('div'); P.id = PANEL_ID;
-  P.innerHTML = `
-<div class="h"><span>모바일라이브 VOD 편성상품 복사 v${VER}</span><button data-a="close" title="닫기">✕</button></div>
-<div class="b">
-  <div class="row" style="align-items:center">방송일자 <input data-r="sd" size="10" style="width:92px"> ~ <input data-r="ed" size="10" style="width:92px"> <span style="color:#555">프로그램명 와니</span></div>
-  <div class="row"><button class="btn p" data-a="search">조회 + 대상 찾기</button><button class="btn" data-a="scan">대상 다시 찾기</button><button class="btn" data-a="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button><span data-r="cnt" style="align-self:center;color:#555"></span></div>
-  <div class="t" data-r="list"></div>
-  <label style="display:block;margin:4px 0"><input type="checkbox" data-r="auto"> 저장 전 확인 없이 자동 저장 (익숙해진 뒤 사용)</label>
-  <div class="row"><button class="btn p" data-a="run">선택 항목 실행</button><button class="btn r" data-a="stop" disabled>중지</button></div>
-  <div class="ask" data-r="ask"><div data-r="askMsg"></div><div class="row" data-r="askBtns"></div></div>
-  <div class="log" data-r="log"></div>
+  // ---------- 패널 UI (세일즈원 자동화 UI 디자인 시스템) ----------
+  if (!document.getElementById('__so_font')) {
+    const lk = document.createElement('link'); lk.id = '__so_font'; lk.rel = 'stylesheet';
+    lk.href = 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css';
+    document.head.appendChild(lk);
+  }
+  // 디자인 시스템 CSS: design/so-ui.css → scripts/inject-design.js 가 아래 표식 사이를 채운다 (직접 고치지 않는다)
+  const SO_UI_CSS = /*SO-UI:BEGIN*/`:host{all:initial;--brand:#0088FF;--brand-strong:#0077E6;--brand-heavy:#0066C7;--brand-text:#0070D6;--brand-subtle:rgba(0,136,255,0.05);--brand-line:rgba(0,136,255,0.28);--brand-focus:rgba(0,136,255,0.12);--fg:#171719;--fg-secondary:rgba(46,47,51,0.88);--fg-tertiary:rgba(55,56,60,0.61);--fg-quaternary:rgba(55,56,60,0.28);--fg-disable:rgba(55,56,60,0.16);--on-brand:#FFFFFF;--bg:#FFFFFF;--bg-secondary:#F7F7F8;--surface-secondary:rgba(112,115,124,0.08);--surface-tertiary:rgba(112,115,124,0.05);--surface-disable:#F4F4F5;--line:rgba(112,115,124,0.22);--line-secondary:rgba(112,115,124,0.16);--line-tertiary:rgba(112,115,124,0.08);--positive:#00BF40;--positive-text:#006E25;--positive-surface:rgba(0,191,64,0.08);--cautionary:#FF9200;--cautionary-text:#9C5800;--cautionary-surface:rgba(255,146,0,0.08);--negative:#FF4242;--negative-text:#E52222;--negative-surface:rgba(255,66,66,0.08);--dimmer:rgba(23,23,25,0.52);--font-sans:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;--font-mono:ui-monospace,SFMono-Regular,Consolas,monospace;--space-4:4px;--space-6:6px;--space-8:8px;--space-10:10px;--space-12:12px;--space-16:16px;--space-18:18px;--radius-5:5px;--radius-6:6px;--radius-8:8px;--radius-10:10px;--radius-12:12px;--radius-16:16px;--radius-full:9999px;--shadow-panel:0px 6px 10px -4px rgba(23,23,23,0.08),0px 16px 24px -6px rgba(23,23,23,0.08);--shadow-focus:0px 0px 0px 3px rgba(0,136,255,0.12);--panel-width:452px;--control-xs:28px;--control-sm:32px;--control-md:40px;--checkbox:20px;--z-panel:2147483000}.so-panel{font-family:var(--font-sans);color:var(--fg);width:var(--panel-width);max-height:84vh;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line-secondary);border-radius:var(--radius-16);box-shadow:var(--shadow-panel);overflow:hidden;-webkit-font-smoothing:antialiased;box-sizing:border-box}.so-panel *{box-sizing:border-box}.so-panel__head{display:flex;align-items:center;gap:var(--space-8);padding:14px 12px 14px var(--space-18);border-bottom:1px solid var(--line-tertiary);cursor:move;user-select:none}.so-panel__title{flex:1;min-width:0;font-size:17px;line-height:24px;font-weight:600}.so-panel__dot{display:inline-block;width:8px;height:8px;border-radius:var(--radius-full);background:var(--brand);margin-right:var(--space-8);vertical-align:2px}.so-panel__body{padding:var(--space-16) var(--space-18) var(--space-18);overflow:auto;display:flex;flex-direction:column;gap:var(--space-12)}.so-panel__foot{display:flex;gap:var(--space-4);justify-content:flex-end;flex-wrap:wrap}.so-chip{display:inline-flex;align-items:center;height:20px;padding:0 var(--space-6);border-radius:var(--radius-6);background:var(--brand-subtle);color:var(--brand-text);font-size:11px;line-height:14px;font-weight:600;letter-spacing:.0311em;vertical-align:2px;margin-left:var(--space-4)}.so-chip--neutral{background:var(--surface-secondary);color:var(--fg-tertiary)}.so-icon-btn{width:var(--control-sm);height:var(--control-sm);border:0;border-radius:var(--radius-10);background:transparent;color:var(--fg-tertiary);font:500 18px/1 var(--font-sans);cursor:pointer}.so-icon-btn:hover{background:var(--surface-secondary);color:var(--fg)}.so-btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-4);border:0;cursor:pointer;font-family:var(--font-sans);font-weight:600;white-space:nowrap;transition:background .12s,box-shadow .12s}.so-btn--md{min-height:var(--control-md);padding:10px 16px;border-radius:var(--radius-12);font-size:14px;line-height:20px;letter-spacing:.0145em}.so-btn--sm{min-height:var(--control-sm);padding:8px 12px;border-radius:var(--radius-10);font-size:12px;line-height:16px;letter-spacing:.0252em}.so-btn--xs{min-height:var(--control-xs);padding:6px 10px;border-radius:var(--radius-8);font-size:12px;line-height:16px}.so-btn--primary{background:var(--brand);color:var(--on-brand)}.so-btn--primary:hover{background:var(--brand-strong)}.so-btn--primary:active{background:var(--brand-heavy)}.so-btn--outlined{background:var(--bg);color:var(--brand-text);box-shadow:inset 0 0 0 1px var(--line)}.so-btn--outlined:hover{background:var(--brand-subtle)}.so-btn--assistive{background:var(--surface-secondary);color:var(--fg-secondary)}.so-btn--text{background:transparent;color:var(--fg-tertiary);padding-left:var(--space-6);padding-right:var(--space-6)}.so-btn--text:hover{color:var(--fg)}.so-btn--full{width:100%}.so-btn:disabled{background:var(--surface-disable);color:var(--fg-disable);box-shadow:none;cursor:default}.so-btn:focus-visible,.so-checkbox:focus-visible{outline:none;box-shadow:var(--shadow-focus)}.so-spinner{width:14px;height:14px;border:2px solid var(--brand-line);border-top-color:var(--brand);border-radius:var(--radius-full);animation:so-spin .8s linear infinite}.so-btn--primary .so-spinner{border-color:rgba(255,255,255,.4);border-top-color:var(--on-brand)}@keyframes so-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.so-spinner{animation-duration:2.4s}}.so-checkbox{appearance:none;-webkit-appearance:none;width:var(--checkbox);height:var(--checkbox);margin:0;border-radius:var(--radius-5);box-shadow:inset 0 0 0 1.5px var(--line);background:var(--bg);cursor:pointer;display:inline-grid;place-items:center;vertical-align:middle}.so-checkbox:checked{background:var(--brand);box-shadow:none}.so-checkbox:checked::after{content:"";width:10px;height:6px;border-left:2px solid var(--on-brand);border-bottom:2px solid var(--on-brand);transform:translateY(-1px) rotate(-45deg)}.so-checkbox:disabled{background:var(--surface-disable);box-shadow:none;cursor:default}.so-steps{display:flex;gap:var(--space-4)}.so-step{flex:1;display:flex;flex-direction:column;gap:var(--space-4);font-size:11px;line-height:14px;font-weight:500;color:var(--fg-tertiary);letter-spacing:.0311em}.so-step::before{content:"";display:block;height:4px;border-radius:var(--radius-full);background:var(--surface-secondary)}.so-step--done::before{background:var(--brand-line)}.so-step--current{color:var(--brand-text)}.so-step--current::before{background:var(--brand)}.so-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-6)}.so-stat{background:var(--bg-secondary);border-radius:var(--radius-12);padding:10px 10px 9px;min-width:0}.so-stat__label{font-size:11px;line-height:14px;color:var(--fg-tertiary);font-weight:500;letter-spacing:.0311em}.so-stat__value{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.012em;font-variant-numeric:tabular-nums}.so-stat--brand .so-stat__value{color:var(--brand)}.so-msg{display:flex;gap:var(--space-10);padding:var(--space-12) 14px;border-radius:var(--radius-12);font-size:13px;line-height:18px;letter-spacing:.0194em;background:var(--surface-tertiary);color:var(--fg-secondary)}.so-msg__icon{flex:none;width:18px;height:18px;border-radius:var(--radius-full);display:grid;place-items:center;font:700 11px/1 var(--font-sans);color:var(--on-brand);background:var(--fg-tertiary)}.so-msg__body{flex:1;min-width:0}.so-msg__title{display:block;color:var(--fg);font-weight:600;margin-bottom:2px}.so-msg__actions{display:flex;gap:var(--space-6);margin-top:var(--space-10)}.so-msg--info{background:var(--brand-subtle)}.so-msg--info .so-msg__icon{background:var(--brand)}.so-msg--positive{background:var(--positive-surface)}.so-msg--positive .so-msg__icon{background:var(--positive)}.so-msg--caution{background:var(--cautionary-surface)}.so-msg--caution .so-msg__icon{background:var(--cautionary)}.so-msg--negative{background:var(--negative-surface)}.so-msg--negative .so-msg__icon{background:var(--negative)}.so-section-head{display:flex;align-items:center;gap:var(--space-6);font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}.so-section-head__count{color:var(--brand-text)}.so-section-head__spacer{flex:1}.so-table-wrap{border:1px solid var(--line-secondary);border-radius:var(--radius-12);overflow:auto;max-height:228px}.so-table{border-collapse:collapse;width:100%;font-size:12px;line-height:16px;letter-spacing:.0252em}.so-table th{position:sticky;top:0;background:var(--bg-secondary);color:var(--fg-tertiary);font-weight:500;text-align:left;padding:var(--space-8);border-bottom:1px solid var(--line-secondary);white-space:nowrap}.so-table td{padding:var(--space-8);border-bottom:1px solid var(--line-tertiary);vertical-align:top;color:var(--fg-secondary)}.so-table tr:last-child td{border-bottom:0}.so-table .so-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.so-table .so-sub{display:block;color:var(--fg-tertiary);font-size:11px;line-height:14px;margin-top:2px}.so-table tr.is-selected td{background:var(--brand-subtle)}.so-up{color:var(--brand-text);font-weight:600}.so-down{color:var(--negative-text);font-weight:600}.so-tag{display:inline-flex;height:20px;align-items:center;padding:0 var(--space-6);border-radius:var(--radius-6);font-size:11px;font-weight:600;white-space:nowrap}.so-tag--on{background:var(--brand-subtle);color:var(--brand-text)}.so-tag--paused{background:var(--cautionary-surface);color:var(--cautionary-text)}.so-tag--ended{background:var(--surface-secondary);color:var(--fg-tertiary)}.so-tag--error{background:var(--negative-surface);color:var(--negative-text)}.so-hint{font-size:12px;line-height:16px;color:var(--fg-tertiary);letter-spacing:.0252em}.so-log{border-top:1px solid var(--line-tertiary);padding-top:var(--space-10)}.so-log>summary{cursor:pointer;font-size:13px;line-height:18px;font-weight:600;color:var(--fg-secondary);list-style:none}.so-log>summary::-webkit-details-marker{display:none}.so-log>summary::before{content:"▸";display:inline-block;margin-right:var(--space-6);color:var(--fg-tertiary);transition:transform .15s}.so-log[open]>summary::before{transform:rotate(90deg)}.so-log__box{margin-top:var(--space-8);background:var(--bg-secondary);border-radius:var(--radius-10);padding:var(--space-10);max-height:150px;overflow:auto;font:12px/18px var(--font-mono);color:var(--fg-secondary);white-space:pre-wrap}.so-log__box .is-error{color:var(--negative-text)}.so-panel__body>*{flex-shrink:0}.so-view{display:flex;flex-direction:column;gap:var(--space-12)}.so-view:empty,.so-slot:empty{display:none}.so-row{display:flex;gap:var(--space-6);flex-wrap:wrap;align-items:center}.so-grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-8)}.so-grow{flex:1;min-width:0}.so-field{display:flex;flex-direction:column;gap:var(--space-4);min-width:0}.so-field__label{font-size:12px;line-height:16px;font-weight:600;letter-spacing:.0252em;color:var(--fg-secondary)}.so-input,.so-textarea{width:100%;min-height:var(--control-sm);border:0;border-radius:var(--radius-10);box-shadow:inset 0 0 0 1px var(--line);background:var(--bg);color:var(--fg);padding:7px var(--space-10);font:400 13px/18px var(--font-sans);letter-spacing:.0194em;outline:none}.so-input::placeholder,.so-textarea::placeholder{color:var(--fg-quaternary)}.so-input:focus,.so-textarea:focus{box-shadow:inset 0 0 0 1px var(--brand),var(--shadow-focus)}.so-textarea{min-height:92px;resize:vertical;font-family:var(--font-mono);font-size:12px;letter-spacing:0}.so-input--date{width:108px;font-variant-numeric:tabular-nums}.so-check{display:flex;gap:var(--space-8);align-items:center;font-size:12px;line-height:16px;letter-spacing:.0252em;color:var(--fg-secondary);cursor:pointer}.so-picks{border:1px solid var(--line-secondary);border-radius:var(--radius-12);overflow:auto;max-height:228px}.so-pick{display:flex;gap:var(--space-8);padding:var(--space-8);border-bottom:1px solid var(--line-tertiary);font-size:12px;line-height:16px;letter-spacing:.0252em;color:var(--fg-secondary);cursor:pointer}.so-pick:last-child{border-bottom:0}.so-pick b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}.so-pick .so-sub{display:block;color:var(--fg-tertiary);font-size:11px;line-height:14px;margin-top:2px}.so-pick.is-off{cursor:default}.so-empty{padding:var(--space-12);font-size:12px;line-height:16px;color:var(--fg-tertiary);text-align:center}.so-msg__text{white-space:pre-wrap}.so-msg__actions{flex-wrap:wrap}.so-msg__list{margin-top:var(--space-10);padding-top:var(--space-10);border-top:1px solid var(--line-tertiary);max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:var(--space-6);font-size:12px;line-height:16px}.so-msg__pre{margin:var(--space-8) 0 0;max-height:150px;overflow:auto;white-space:pre-wrap;font:12px/18px var(--font-mono);color:var(--fg-secondary)}`/*SO-UI:END*/;
+  const HOST = document.createElement('div'); HOST.id = PANEL_ID;
+  HOST.style.cssText = 'position:fixed;top:72px;right:16px;z-index:2147483000;';
+  const ROOT = HOST.attachShadow({ mode: 'open' });   // 세일즈원(MUI) 스타일과 섞이지 않게 Shadow DOM 안에 그린다
+  ROOT.innerHTML = `<style>${SO_UI_CSS}</style>
+<div class="so-panel">
+  <div class="so-panel__head"><div class="so-panel__title"><span class="so-panel__dot"></span>VOD 편성상품 복사<span class="so-chip">v${VER}</span><span class="so-chip so-chip--neutral">SJ와니</span></div>
+    <button class="so-icon-btn" data-a="min" title="접기">–</button><button class="so-icon-btn" data-a="close" title="닫기">×</button></div>
+  <div class="so-panel__body" data-r="body">
+    <div class="so-row"><span class="so-field__label">방송일자</span><input class="so-input so-input--date" data-r="sd" size="10"><span class="so-hint">~</span><input class="so-input so-input--date" data-r="ed" size="10"><span class="so-hint">프로그램명 와니</span></div>
+    <button class="so-btn so-btn--md so-btn--primary so-btn--full" data-a="search">조회하고 대상 찾기</button>
+    <div class="so-section-head">상품이 빈 [VOD] 편성 <span class="so-section-head__count" data-r="cnt"></span><span class="so-section-head__spacer"></span><button class="so-btn so-btn--xs so-btn--text" data-a="scan">대상 다시 찾기</button></div>
+    <div class="so-picks" data-r="list"></div>
+    <label class="so-check"><input type="checkbox" class="so-checkbox" data-r="auto"><span>저장 전 확인 없이 자동 저장 (익숙해진 뒤 사용)</span></label>
+    <div class="so-row"><button class="so-btn so-btn--sm so-btn--primary" data-a="run">선택 항목 실행</button><button class="so-btn so-btn--sm so-btn--assistive" data-a="stop" disabled>중지</button></div>
+    <div class="so-slot" data-r="ask"></div>
+    <details class="so-log" open><summary>진행 로그</summary><div class="so-log__box" data-r="log"></div></details>
+    <div class="so-panel__foot"><button class="so-btn so-btn--xs so-btn--assistive" data-a="diag" title="오류가 나면 눌러서 Claude에게 붙여넣기">진단 내용 복사</button></div>
+  </div>
 </div>`;
-  document.body.appendChild(P);
+  document.body.appendChild(HOST);
+  const P = ROOT.querySelector('.so-panel');   // 패널 본체(Shadow DOM 안). 아래 로직은 P.querySelector 로 요소를 찾는다
   const $ = sel => P.querySelector(sel);
   const logBox = $('[data-r="log"]');
   function log(m) {
@@ -472,23 +469,28 @@
     logBox.scrollTop = logBox.scrollHeight;
     console.log('[VOD복사] ' + m);
   }
+  // 패널 안 확인창(SectionMessage). 첫 줄 = 제목, 나머지 = 본문. 첫 버튼이 주 동작.
   function ask(msg, labels) {
     const box = $('[data-r="ask"]');
-    $('[data-r="askMsg"]').textContent = msg;
-    const btns = $('[data-r="askBtns"]'); btns.innerHTML = '';
-    box.style.display = 'block';
+    const kind = /^⏸/.test(msg) ? 'caution' : /^오류/.test(msg) ? 'negative' : 'info';
+    const lines = String(msg).replace(/^⏸\s*/, '').split('\n');
+    box.innerHTML = `<div class="so-msg so-msg--${kind}"><span class="so-msg__icon">${kind === 'info' ? '?' : '!'}</span><div class="so-msg__body"><strong class="so-msg__title"></strong><div class="so-msg__text"></div><div class="so-msg__actions"></div></div></div>`;
+    box.querySelector('.so-msg__title').textContent = lines[0];
+    box.querySelector('.so-msg__text').textContent = lines.slice(1).join('\n').replace(/^\n+/, '');
+    const btns = box.querySelector('.so-msg__actions');
+    if (box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
     return new Promise(res => {
       labels.forEach((l, i) => {
         const b = document.createElement('button');
-        b.className = 'btn' + (i === 0 ? ' p' : '');
+        b.className = 'so-btn so-btn--sm ' + (i === 0 ? 'so-btn--primary' : 'so-btn--assistive');
         b.textContent = l;
         b.onclick = () => {
           if (l === '진단 내용 복사') { copyDiag(); return; }
-          box.style.display = 'none'; res(l);
+          box.innerHTML = ''; res(l);
         };
         btns.appendChild(b);
       });
-      S.cancelAsk = () => { box.style.display = 'none'; res('중지'); };
+      S.cancelAsk = () => { box.innerHTML = ''; res('중지'); };
     });
   }
   // 자동화가 못 하는 단계: 사용자가 직접 처리 후 계속
@@ -500,11 +502,11 @@
     if (a === '이 건 건너뛰기') throw new Error('SKIP');
   }
 
-  // 드래그 이동
+  // 드래그 이동 (Shadow DOM 바깥의 HOST를 옮긴다)
   (() => {
-    const h = $('.h'); let sx, sy, ox, oy, on = false;
-    h.addEventListener('mousedown', e => { if (e.target.tagName === 'BUTTON') return; on = true; sx = e.clientX; sy = e.clientY; const r = P.getBoundingClientRect(); ox = r.left; oy = r.top; e.preventDefault(); });
-    document.addEventListener('mousemove', e => { if (!on) return; P.style.left = ox + e.clientX - sx + 'px'; P.style.top = oy + e.clientY - sy + 'px'; P.style.right = 'auto'; });
+    const h = $('.so-panel__head'); let sx, sy, ox, oy, on = false;
+    h.addEventListener('mousedown', e => { if (e.target.tagName === 'BUTTON') return; on = true; sx = e.clientX; sy = e.clientY; const r = HOST.getBoundingClientRect(); ox = r.left; oy = r.top; e.preventDefault(); });
+    document.addEventListener('mousemove', e => { if (!on) return; HOST.style.left = ox + e.clientX - sx + 'px'; HOST.style.top = Math.max(0, oy + e.clientY - sy) + 'px'; HOST.style.right = 'auto'; });
     document.addEventListener('mouseup', () => { on = false; });
   })();
 
@@ -526,11 +528,12 @@
     S.targets.forEach((t, i) => {
       const ok = t.orig && t.brand;
       const lb = document.createElement('label');
-      lb.innerHTML = `<input type="checkbox" ${ok ? 'checked' : 'disabled'} data-i="${i}"><span><b>${t.start}</b> ${t.pgm.replace(/</g, '&lt;')}<br><small>${ok ? `원방송 ${t.orig.date} ${t.orig.time} ` : '⚠ 원방송 일시를 읽을 수 없거나 와니 편성이 아니라 제외'}</small></span>`;
+      lb.className = 'so-pick' + (ok ? '' : ' is-off');
+      lb.innerHTML = `<input type="checkbox" class="so-checkbox" ${ok ? 'checked' : 'disabled'} data-i="${i}"><span class="so-grow"><b>${t.start}</b> ${t.pgm.replace(/</g, '&lt;')}<span class="so-sub">${ok ? `원방송 ${t.orig.date} ${t.orig.time} ` : '⚠ 원방송 일시를 읽을 수 없거나 와니 편성이 아니라 제외'}</span></span>`;
       L.appendChild(lb);
     });
-    $('[data-r="cnt"]').textContent = `[VOD] 상품 빈 편성 ${S.targets.length}건`;
-    if (!S.targets.length) L.innerHTML = '<div style="padding:8px;color:#888">대상 없음</div>';
+    $('[data-r="cnt"]').textContent = S.targets.length;
+    if (!S.targets.length) L.innerHTML = '<div class="so-empty">대상이 없어요</div>';
   }
   // ---------- 0) 방송일자·프로그램명 세팅 후 조회 ----------
   const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -552,7 +555,7 @@
     const sd = $('[data-r="sd"]').value.trim(), ed = $('[data-r="ed"]').value.trim(), kw = KW;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(sd) || !/^\d{4}-\d{2}-\d{2}$/.test(ed)) { log('❗ 방송일자를 YYYY-MM-DD 형식으로 넣어주세요.'); return false; }
     saveSettings();
-    if (!(await goList(true))) { log('❗ 아이템 편성 > 모바일라이브 화면을 찾지 못했습니다. 그 화면을 연 뒤 [조회 + 대상 찾기]를 눌러주세요.'); return false; }
+    if (!(await goList(true))) { log('❗ 아이템 편성 > 모바일라이브 화면을 찾지 못했습니다. 그 화면을 연 뒤 [조회하고 대상 찾기]를 눌러주세요.'); return false; }
     log(`조회: ${sd} ~ ${ed} / 프로그램명 "${kw}"`);
     const getIns = () => {
       const p = listPanel(); if (!p) return [];
@@ -1041,7 +1044,8 @@
   P.addEventListener('click', e => {
     const a = e.target.closest('[data-a]'); if (!a) return;
     const act = a.dataset.a;
-    if (act === 'close') { if (S.running) { S.stop = true; S.cancelAsk && S.cancelAsk(); } P.style.display = 'none'; }
+    if (act === 'close') { if (S.running) { S.stop = true; S.cancelAsk && S.cancelAsk(); } HOST.style.display = 'none'; }
+    if (act === 'min') { const b = $('[data-r="body"]'); b.style.display = b.style.display === 'none' ? '' : 'none'; }
     if (act === 'scan') doScan();
     if (act === 'search') searchAndScan();
     if (act === 'diag') copyDiag();
@@ -1050,7 +1054,7 @@
   });
   $('[data-r="auto"]').addEventListener('change', e => { S.autoSave = e.target.checked; });
 
-  window.__MLCOPY = { show: () => { P.style.display = 'flex'; if (!S.running) searchAndScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER, running: () => S.running, _dbg: { dialogByTitle, popupRows, popupRowsNow, pickByCalendar } };
+  window.__MLCOPY = { show: () => { HOST.style.display = ''; if (!S.running) searchAndScan(); }, diag: copyDiag, diagText: buildDiag, ver: VER, running: () => S.running, _dbg: { dialogByTitle, popupRows, popupRowsNow, pickByCalendar } };
   log(`v${VER} 시작. 대상 확인 후 [선택 항목 실행]을 누르세요.`);
   loadSettings();
   await searchAndScan();
