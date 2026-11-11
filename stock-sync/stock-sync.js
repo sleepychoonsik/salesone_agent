@@ -520,6 +520,12 @@
     L.push('\n## 변경안(앞 30건)'); L.push(S.plan.slice(0, 30).map(p => `- ${p.attr} ${p.qB}→${p.qA} ${p.fB}→${p.fA}`).join('\n') || '- 없음');
     L.push('\n## 체크한 판매재개'); L.push(S.rep.filter(r => r.pick).slice(0, 30).map(r => `- ${r.attr} ${r.nm} ${r.a1}/${r.a2} ${r.f}(${FLAG[r.f]}) 수량 ${r.q}`).join('\n') || '- 없음');
     const rj = (S.saved && S.saved.rej) || []; if (rj.length) { L.push('\n## 세일즈원이 거절한 판매재개'); L.push(rj.map(r => `- ${r.attr} ${r.nm} ${r.f}(${FLAG[r.f]}) — ${r.why}`).join('\n')); }
+    try { // 상품 단위 판매상태 등 어떤 값 때문에 거절되는지 확인할 수 있게, 판매중지 행의 그리드 원본 값을 담는다
+      const want = new Set(S.rep.filter(r => r.pick).concat(rj, S.rep).map(r => r.attr));
+      const g = want.size && saleGrid();
+      const raw = g ? g.getDataSource().getJsonRows(0, -1).filter(r => want.has(r.attrPrdCd)).slice(0, 3) : [];
+      if (raw.length) { L.push('\n## 판매중지 행 원본 값(앞 3건)'); raw.forEach(r => L.push('- ' + JSON.stringify(r).slice(0, 1500))); }
+    } catch (e) {}
     L.push('\n## 최근 로그'); L.push(D.logs.slice(-80).join('\n') || '- 없음');
     return L.join('\n');
   }
