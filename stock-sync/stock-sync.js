@@ -1,9 +1,10 @@
 /* =========================================================================
- * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.0
+ * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1
  *  - 직매입 재고/평가감 현황(영업부서 S31)에서 SJ와니·AM 상품코드 추출
  *  - 판매상태/수량관리: 전체주문가능수량 = 주문가능재고(A), 주문가능재고 ≤ 0 인 판매중 → 일시품절
  *  - 재고 있는데 판매종료/일시품절인 SKU는 체크한 것만 판매중으로 전환
- *  - 저장은 패널 안 확인 후 1000건 단위, 저장 뒤 재조회 점검
+ *  - 수량은 조회 직후 확인 없이 자동 저장, 판매상태 변경(일시품절 전환·판매재개)만 패널 안 확인 후 저장
+ *  - 저장은 1000건 단위, 저장 뒤 재조회 점검
  *  - 화면 요소를 못 찾으면 멈추고 "직접 처리 후 [계속]" 안내
  *  - 문제가 생기면 [진단 내용 복사] → Claude에게 붙여넣기
  *  - 디자인: Montage(wanteddev/montage-web) 토큰 · Pretendard · 포인트 #0088FF
@@ -11,7 +12,7 @@
 (async () => {
   'use strict';
   const TITLE = '재고동기화';
-  const VER = 'v1.0';
+  const VER = 'v1.1';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__SSY_FRESH) {
     try {
@@ -45,6 +46,7 @@
   const HASH_STOCK = '#/logistics/delivery/DirectBuyStock';
   const HASH_SALE = '#/product/product/bundle/SaleStQtyMng';
   const BATCH = 1000;                                   // 저장 1회 최대 건수
+  const AUTO_QTY_LIMIT = n => Math.max(200, n * 0.3);   // 수량 자동 적용 상한: 이보다 많으면 적용 전에 확인을 받는다
   const isTargetSku = s => { s = String(s || ''); return s.includes('SJ와니') || /sj wani/i.test(s) || /(?<![A-Za-z])AM(?![A-Za-z])/.test(s); };
   const isPrdCd = c => /^1\d{9}$/.test(String(c || ''));
   const FLAG = { N: '판매중', Y: '판매종료', T: '일시품절', S: '품절해제' };
@@ -230,8 +232,28 @@
     D.step = '② 조회';
     if (!S.codes.length) throw new Error('먼저 ① 대상 추출을 실행해주세요');
     log(`판매상태/수량관리 조회 (상품코드 ${S.codes.length}개)`);
-    const rows = (await querySale()).getDataSource().getJsonRows(0, -1);
-    const plan = buildPlan(rows);
+    let g = await querySale();
+    let rows = g.getDataSource().getJsonRows(0, -1);
+    let plan = buildPlan(rows);
+    const nq = plan.filter(p => p.qA !== p.qB).length;
+    if (nq) {
+      // 수량은 확인 없이 바로 적용한다. 평소보다 지나치게 많으면(조회 이상 가능성) 확인을 받는다.
+      let go = true;
+      if (nq > AUTO_QTY_LIMIT(rows.length))
+        go = await ask('caution', `수량 변경이 ${nq}건으로 평소보다 많아요.`, `전체 SKU ${rows.length}건 중 ${nq}건입니다. 그대로 적용할까요?`, '적용', '건너뛰기');
+      if (go) {
+        D.step = '② 수량 자동 적용';
+        log(`수량 ${nq}건 자동 적용`);
+        remember(await applyAndSave(g, rows, { qty: true, flag: false }));
+        D.step = '② 반영 확인';
+        log('다시 조회해서 반영 확인');
+        g = await querySale();
+        rows = g.getDataSource().getJsonRows(0, -1);
+        plan = buildPlan(rows);
+        const left = plan.filter(p => p.qA !== p.qB).length;
+        log(left ? `수량 미반영 ${left}건 (판매종료 상품은 반영되지 않을 수 있어요)` : '수량 모두 반영됨');
+      } else log('수량 자동 적용 건너뜀');
+    }
     const after = new Map(plan.map(p => [p.attr, p]));
     const prevPick = new Set((S.rep || []).filter(r => r.pick).map(r => r.attr));
     S.rep = rows.map(r => {
@@ -239,7 +261,7 @@
       return Object.assign(info(r), { q: p ? p.qA : Number(r.allOrdPsblQty), f: p ? p.fA : r.saleFlag, pick: prevPick.has(r.attrPrdCd) });
     }).filter(x => x.q > 0 && (x.f === 'Y' || x.f === 'T'));
     S.plan = plan; S.verify = null; S.n = rows.length; persist();
-    log(`SKU ${rows.length}건 · 수량 갱신 ${plan.filter(p => p.qA !== p.qB).length} · 일시품절 전환 ${plan.filter(p => p.fA !== p.fB).length} · 재고 있는 판매중지 ${S.rep.length}`);
+    log(`SKU ${rows.length}건 · 수량 미반영 ${plan.filter(p => p.qA !== p.qB).length} · 일시품절 전환 대기 ${plan.filter(p => p.fA !== p.fB).length} · 재고 있는 판매중지 ${S.rep.length}`);
   }
 
   /* ---------------- ③ 저장 ---------------- */
@@ -256,34 +278,29 @@
     await sleep(500);
     if (!/저장\s*완료/.test(m2)) throw new Error('저장 결과 팝업: ' + m2.slice(0, 160));
   }
-  async function stepSave() {
-    D.step = '③ 저장';
-    const picks = S.rep.filter(r => r.pick);
-    if (!S.plan.length && !picks.length) { log('저장할 변경이 없어요'); return; }
-    const nq = S.plan.filter(p => p.qA !== p.qB).length, nt = S.plan.filter(p => p.fA !== p.fB).length;
-    const ok = await ask('brand', '세일즈원에 저장할까요?',
-      `수량 갱신 ${nq}건 · 일시품절 전환 ${nt}건${picks.length ? ` · 판매재개 ${picks.length}건` : ''}<br>저장 직전에 다시 조회해서 최신 값 기준으로 적용합니다.`, '저장', '취소');
-    if (!ok) { log('저장 취소'); return; }
-    log('저장 직전 재조회');
-    const g = await querySale();
+  // 최신 조회 결과(fresh) 기준으로 변경을 그리드에 넣고 1000건 단위로 저장한다.
+  // qty: 수량 적용 여부, flag: 판매중→일시품절 적용 여부, picks: 판매재개할 행. 실제로 적용한 내역을 돌려준다.
+  async function applyAndSave(g, fresh, { qty, flag, picks = [] }) {
     const ds = g.getDataSource();
-    const fresh = ds.getJsonRows(0, -1);
     const idx = new Map(fresh.map((r, i) => [r.attrPrdCd, i]));
-    S.plan = buildPlan(fresh); persist();
-    const ops = new Map();
+    const ops = new Map(), done = [], donePicks = [];
     const add = (i, fn) => { const prev = ops.get(i); ops.set(i, prev ? () => { prev(); fn(); } : fn); };
-    for (const p of S.plan) {
+    for (const p of buildPlan(fresh)) {
       const i = idx.get(p.attr); if (i == null) continue;
-      add(i, () => { if (p.qA !== p.qB) ds.setValue(i, 'allOrdPsblQty', p.qA); if (p.fA !== p.fB) ds.setValue(i, 'saleFlag', p.fA); });
+      const dq = qty && p.qA !== p.qB, df = flag && p.fA !== p.fB;
+      if (!dq && !df) continue;
+      add(i, () => { if (dq) ds.setValue(i, 'allOrdPsblQty', p.qA); if (df) ds.setValue(i, 'saleFlag', p.fA); });
+      done.push(Object.assign({}, p, { qA: dq ? p.qA : p.qB, fA: df ? p.fA : p.fB }));
     }
     for (const r of picks) {
       const i = idx.get(r.attr); if (i == null) continue;
       const cur = fresh[i].saleFlag;
       if (cur !== 'Y' && cur !== 'T') continue;                  // 이미 판매중이면 건너뜀
       add(i, () => ds.setValue(i, 'saleFlag', cur === 'T' ? 'S' : 'N')); // 일시품절→품절해제, 판매종료→판매중
+      donePicks.push(Object.assign({}, r));
     }
     const list = [...ops.entries()];
-    log(`적용 대상 ${list.length}행 (최신 값 기준 변경 ${S.plan.length} · 판매재개 ${picks.length})`);
+    log(`적용 대상 ${list.length}행 (수량·일시품절 ${done.length} · 판매재개 ${donePicks.length})`);
     for (let k = 0; k < list.length; k += BATCH) {
       const chunk = list.slice(k, k + BATCH);
       if (g.commit) g.commit(true);
@@ -293,8 +310,29 @@
       await clickSave();
       log('저장 완료');
     }
-    S.saved = { plan: S.plan, picks: picks.map(r => Object.assign({}, r)) };
-    persist();
+    return { plan: done, picks: donePicks };
+  }
+  // 저장 내역 누적(같은 SKU는 처음 값 → 마지막 값으로 합침). ④ 점검과 보고에 쓴다.
+  function remember(res) {
+    const sv = S.saved || { plan: [], picks: [] };
+    const by = new Map(sv.plan.map(p => [p.attr, p]));
+    res.plan.forEach(p => { const e = by.get(p.attr); if (e) { e.qA = p.qA; e.fA = p.fA; } else { sv.plan.push(p); by.set(p.attr, p); } });
+    const pk = new Set(sv.picks.map(p => p.attr));
+    res.picks.forEach(p => { if (!pk.has(p.attr)) { sv.picks.push(p); pk.add(p.attr); } });
+    S.saved = sv; persist();
+  }
+  async function stepSave() {
+    D.step = '③ 판매상태 저장';
+    const picks = S.rep.filter(r => r.pick);
+    const nt = S.plan.filter(p => p.fA !== p.fB).length;
+    if (!nt && !picks.length) { log('저장할 판매상태 변경이 없어요'); return; }
+    const ok = await ask('brand', '판매상태를 저장할까요?',
+      `일시품절 전환 ${nt}건${picks.length ? ` · 판매재개 ${picks.length}건` : ''}<br>저장 직전에 다시 조회해서 최신 값 기준으로 적용합니다. 그 사이 바뀐 수량도 함께 맞춥니다.`, '저장', '취소');
+    if (!ok) { log('저장 취소'); return; }
+    log('저장 직전 재조회');
+    const g = await querySale();
+    const fresh = g.getDataSource().getJsonRows(0, -1);
+    remember(await applyAndSave(g, fresh, { qty: true, flag: true, picks }));
     await stepVerify();
   }
 
@@ -305,10 +343,10 @@
     const rows = (await querySale()).getDataSource().getJsonRows(0, -1);
     const by = new Map(rows.map(r => [r.attrPrdCd, r]));
     const sv = S.saved || { plan: [], picks: [] };
-    const nf = [];
+    const nf = [], pkSet = new Set(sv.picks.map(p => p.attr));
     for (const p of sv.plan) {
       const r = by.get(p.attr);
-      if (!r || Number(r.allOrdPsblQty) !== p.qA || r.saleFlag !== p.fA)
+      if (!r || Number(r.allOrdPsblQty) !== p.qA || (r.saleFlag !== p.fA && !pkSet.has(p.attr)))
         nf.push(Object.assign({}, p, { why: !r ? '행 없음' : r.saleFlag === 'Y' ? '판매종료 상품이라 반영 안 됨' : `값 불일치(${r.allOrdPsblQty}/${FLAG[r.saleFlag]})` }));
     }
     for (const p of sv.picks) {
@@ -322,6 +360,7 @@
     const outside = sv.plan.filter(p => !codeSet.has(p.prd)).length;
     S.rep = rows.filter(r => Number(r.allOrdPsblQty) > 0 && (r.saleFlag === 'Y' || r.saleFlag === 'T'))
       .map(r => Object.assign(info(r), { q: Number(r.allOrdPsblQty), f: r.saleFlag, pick: false }));
+    S.plan = buildPlan(rows);
     S.verify = { nf, mism, soLeft, outside, n: rows.length };
     S.n = rows.length; persist();
     log(`점검: 미반영 ${nf.length} · 남은 불일치 ${mism.length} · 판매중 0재고 ${soLeft.length} · 대상 외 수정 ${outside}`);
@@ -340,6 +379,8 @@
     Object.entries(byPrd).forEach(([k, n]) => L.push(`  - ${k} · ${n} SKU`));
     L.push(`- 일시품절 전환 ${so.length}건`);
     so.forEach(p => L.push(`  - ${p.prd} · ${p.nm} · ${p.a1} · ${p.a2}`));
+    const pend = S.saved && !S.verify ? S.plan.filter(p => p.fA !== p.fB) : [];
+    if (pend.length) { L.push(`- 일시품절 전환 대기 ${pend.length}건 (저장 전)`); pend.forEach(p => L.push(`  - ${p.prd} · ${p.nm} · ${p.a1} · ${p.a2}`)); }
     if (sv.picks.length) {
       L.push(`- 판매재개 ${sv.picks.length}건`);
       sv.picks.forEach(p => L.push(`  - ${p.prd} · ${p.nm} · ${p.a1}/${p.a2} (${FLAG[p.f]}→판매중)`));
@@ -502,11 +543,11 @@ details[open] summary::before{transform:rotate(90deg)}
     <button class="ib" id="min" title="접기">–</button><button class="ib" id="x" title="닫기">×</button></div>
   <div class="b" id="body">
     <div class="steps" id="steps"></div>
-    <button class="btn md primary full" id="all">대상 추출하고 변경안 보기</button>
+    <button class="btn md primary full" id="all">대상 추출하고 수량 맞추기</button>
     <div class="grid2">
       <button class="btn sm outlined" id="s1">① 대상 추출</button>
-      <button class="btn sm outlined" id="s2">② 조회·변경안</button>
-      <button class="btn sm primary" id="s3">③ 저장</button>
+      <button class="btn sm outlined" id="s2">② 조회·수량 적용</button>
+      <button class="btn sm primary" id="s3">③ 판매상태 저장</button>
       <button class="btn sm outlined" id="s4">④ 점검</button>
     </div>
     <div id="ask"></div>
@@ -544,18 +585,19 @@ details[open] summary::before{transform:rotate(90deg)}
 
   function render() {
     const stage = S.verify ? 4 : S.saved ? 3 : S.plan.length || S.rep.length || S.n ? 2 : S.codes.length ? 1 : 0;
-    $('steps').innerHTML = ['대상 추출', '변경안', '저장', '점검'].map((t, i) =>
+    $('steps').innerHTML = ['대상 추출', '수량 적용', '판매상태', '점검'].map((t, i) =>
       `<div class="st ${i + 1 === stage + 1 ? 'on' : i < stage ? 'done' : ''}"><b></b>${i + 1}. ${t}</div>`).join('');
     const nq = S.plan.filter(p => p.qA !== p.qB).length, nt = S.plan.filter(p => p.fA !== p.fB).length;
+    const nApplied = S.saved ? S.saved.plan.filter(p => p.qA !== p.qB).length : 0;
     let h = '';
     if (S.codes.length) {
       h += `<div class="stats">
         <div class="sc"><div class="k">대상 상품</div><div class="v">${S.codes.length}</div></div>
-        <div class="sc brand"><div class="k">수량 갱신</div><div class="v">${S.n ? nq : '-'}</div></div>
-        <div class="sc brand"><div class="k">일시품절</div><div class="v">${S.n ? nt : '-'}</div></div>
+        <div class="sc brand"><div class="k">수량 적용</div><div class="v">${S.n ? nApplied : '-'}</div></div>
+        <div class="sc brand"><div class="k">일시품절 대기</div><div class="v">${S.n ? nt : '-'}</div></div>
         <div class="sc"><div class="k">재고있는 중지</div><div class="v">${S.n ? S.rep.length : '-'}</div></div></div>`;
     } else {
-      h += `<div class="msg brand"><span class="dot">i</span><div class="c"><strong>세일즈원 로그인 상태에서 바로 실행돼요</strong>위 버튼을 누르면 직매입 재고(S31) → 판매상태/수량관리 순서로 화면을 자동 조작합니다. 저장은 ③에서 확인 후에만 해요.</div></div>`;
+      h += `<div class="msg brand"><span class="dot">i</span><div class="c"><strong>세일즈원 로그인 상태에서 바로 실행돼요</strong>위 버튼을 누르면 직매입 재고(S31) → 판매상태/수량관리 순서로 화면을 자동 조작합니다. 수량은 조회 직후 자동으로 맞추고, 판매상태 변경은 ③에서 확인 후에만 저장해요.</div></div>`;
     }
     if (S.verify) {
       const v = S.verify, clean = !v.nf.length && !v.mism.length && !v.soLeft.length && !v.outside;
@@ -564,8 +606,9 @@ details[open] summary::before{transform:rotate(90deg)}
         미반영 ${v.nf.length} · 남은 불일치 ${v.mism.length} · 판매중 0재고 ${v.soLeft.length} · 대상 외 수정 ${v.outside}
         ${list.length ? '<br>' + list.map(esc).join('<br>') : ''}</div></div>`;
     }
+    if (nApplied && !S.verify) h += `<div class="msg positive"><span class="dot">✓</span><div class="c"><strong>수량 ${nApplied}건 자동 적용</strong>전체주문가능수량을 주문가능재고에 맞춰 저장했어요.${nq ? ` 아직 다른 ${nq}건은 아래 표에서 확인해주세요.` : ''}</div></div>`;
     if (S.plan.length && !S.verify) {
-      h += `<div class="sh">변경안 <span class="n">${S.plan.length}</span></div><div class="tw"><table><tr><th>상품</th><th>속성</th><th style="text-align:right">전체주문가능</th><th>판매상태</th></tr>`;
+      h += `<div class="sh">남은 변경 <span class="n">${S.plan.length}</span><span class="sp"></span><span class="hint">판매상태는 ③에서 확인 후 저장</span></div><div class="tw"><table><tr><th>상품</th><th>속성</th><th style="text-align:right">전체주문가능</th><th>판매상태</th></tr>`;
       S.plan.forEach(p => {
         const q = p.qA !== p.qB ? `${p.qB} → <span class="${p.qA > p.qB ? 'up' : 'dn'}">${p.qA}</span>` : p.qB;
         const f = p.fA !== p.fB ? `<span class="tag ${p.fB}">${FLAG[p.fB]}</span> → <span class="tag ${p.fA}">${FLAG[p.fA]}</span>` : `<span class="tag ${p.fB}">${FLAG[p.fB]}</span>`;
@@ -573,7 +616,7 @@ details[open] summary::before{transform:rotate(90deg)}
       });
       h += '</table></div>';
     } else if (S.n && !S.plan.length && !S.verify) {
-      h += `<div class="msg positive"><span class="dot">✓</span><div class="c"><strong>수량·판매상태 변경할 게 없어요</strong>전체주문가능수량이 모두 주문가능재고와 같아요.</div></div>`;
+      h += `<div class="msg positive"><span class="dot">✓</span><div class="c"><strong>남은 변경이 없어요</strong>전체주문가능수량이 모두 주문가능재고와 같고, 바꿀 판매상태도 없어요.</div></div>`;
     }
     if (S.rep.length) {
       const np = S.rep.filter(r => r.pick).length;
@@ -583,7 +626,7 @@ details[open] summary::before{transform:rotate(90deg)}
       S.rep.forEach((r, i) => {
         h += `<tr class="${r.pick ? 'pk' : ''}"><td><input type="checkbox" class="cb" data-i="${i}"${r.pick ? ' checked' : ''}></td><td>${esc(r.prd)}<span class="s">${esc(r.nm)} · ${esc(r.attr)}</span></td><td>${esc(r.a1)}/${esc(r.a2)}</td><td><span class="tag ${r.f}">${FLAG[r.f]}</span></td><td class="n">${esc(r.q)}</td></tr>`;
       });
-      h += `</table></div><div class="hint">체크한 ${np}건은 ③ 저장 때 판매중으로 바뀌어요. 일시품절 → 품절해제(저장 후 판매중) · 판매종료 → 판매중${S.rep.some(r => r.pick && r.f === 'Y') ? ' <b style="color:var(--neg-strong)">· 판매종료 전환은 아직 실사용 검증 전이에요</b>' : ''}</div>`;
+      h += `</table></div><div class="hint">체크한 ${np}건은 ③ 판매상태 저장 때 판매중으로 바뀌어요. 일시품절 → 품절해제(저장 후 판매중) · 판매종료 → 판매중${S.rep.some(r => r.pick && r.f === 'Y') ? ' <b style="color:var(--neg-strong)">· 판매종료 전환은 아직 실사용 검증 전이에요</b>' : ''}</div>`;
     }
     $('view').innerHTML = h;
     root.querySelectorAll('.cb[data-i]').forEach(cb => cb.onchange = () => { S.rep[+cb.dataset.i].pick = cb.checked; persist(); render(); });
@@ -592,7 +635,7 @@ details[open] summary::before{transform:rotate(90deg)}
     if ($('pa')) $('pa').onclick = () => setAll(() => true);
     if ($('pn')) $('pn').onclick = () => setAll(() => false);
     if ($('pt')) $('pt').onclick = () => setAll(r => r.f === 'T');
-    $('s3').disabled = busy || !(S.plan.length || S.rep.some(r => r.pick));
+    $('s3').disabled = busy || !(S.plan.some(p => p.fA !== p.fB) || S.rep.some(r => r.pick));
     $('s2').disabled = busy || !S.codes.length;
     $('s4').disabled = busy || !S.codes.length;
   }
@@ -612,7 +655,7 @@ details[open] summary::before{transform:rotate(90deg)}
   };
   $('s1').onclick = run('s1', async () => { await stepExtract(); });
   $('s2').onclick = run('s2', stepQuery);
-  $('all').onclick = run('all', async () => { await stepExtract(); render(); await stepQuery(); log('변경안을 확인하고 ③ 저장을 눌러주세요'); });
+  $('all').onclick = run('all', async () => { await stepExtract(); render(); await stepQuery(); log(S.plan.some(p => p.fA !== p.fB) || S.rep.length ? '판매상태 변경은 확인 후 ③ 판매상태 저장을 눌러주세요' : '판매상태를 바꿀 것은 없어요'); });
   $('s3').onclick = run('s3', stepSave);
   $('s4').onclick = run('s4', async () => { if (!S.saved) S.saved = { plan: [], picks: [] }; await stepVerify(); });
   $('cp').onclick = async () => log(await copyText(report()) ? '📋 보고 내용을 복사했습니다' : '❗ 복사 실패', false);
