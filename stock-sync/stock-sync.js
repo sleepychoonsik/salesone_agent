@@ -1,10 +1,11 @@
 /* =========================================================================
- * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.2
+ * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.2.1
  *  - 직매입 재고/평가감 현황(영업부서 S31)에서 SJ와니·AM 상품코드 추출
  *  - 판매상태/수량관리: 전체주문가능수량 = 주문가능재고(A), 주문가능재고 ≤ 0 인 판매중 → 일시품절
  *  - 재고 있는데 판매종료/일시품절인 SKU는 체크한 것만 판매중으로 전환
  *  - 수량은 조회 직후 확인 없이 자동 저장, 판매상태 변경(일시품절 전환·판매재개)만 패널 안 확인 후 저장
  *  - 저장은 1000건 단위, 저장 뒤 재조회 점검
+ *  - 세일즈원이 저장을 거절하면(예: "종료해제 대상이 아닙니다") 판매재개를 한 건씩 저장해 거절된 행만 가려내고 나머지는 저장
  *  - 화면 요소를 못 찾으면 멈추고 "직접 처리 후 [계속]" 안내
  *  - 문제가 생기면 [진단 내용 복사] → Claude에게 붙여넣기
  *  - 디자인: 세일즈원 자동화 UI 디자인 시스템(design/so-ui.css) — Montage 토큰 · Pretendard · 포인트 #0088FF
@@ -12,7 +13,7 @@
 (async () => {
   'use strict';
   const TITLE = '재고동기화';
-  const VER = 'v1.2';
+  const VER = 'v1.2.1';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__SSY_FRESH) {
     try {
@@ -266,7 +267,17 @@
     (await need(() => btnByText('저장'), '[저장] 버튼')).click();
     const d1 = await need(() => { const d = topDialog(); return d && btnByText('확인', d) ? d : null; }, '저장 확인창', 15000);
     const m1 = txt(d1).replace(/\s+/g, ' ');
-    if (!/저장\s*하시겠습니까/.test(m1)) throw new Error('예상 못한 팝업: ' + m1.slice(0, 120));
+    if (!/저장\s*하시겠습니까/.test(m1)) {
+      // 저장 확인창 대신 뜬 안내창(버튼이 [확인] 하나)은 세일즈원이 저장 전에 거절한 것 → 닫고 거절 사유를 알린다.
+      // 버튼이 더 있는 창은 무엇을 묻는지 모르므로 건드리지 않고 멈춘다.
+      const btns = [...d1.querySelectorAll('button')].filter(b => vis(b) && txt(b));
+      if (btns.length !== 1) throw new Error('예상 못한 팝업: ' + m1.slice(0, 120));
+      const why = m1.replace(/^확인\s*/, '').replace(/\s*확인$/, '').slice(0, 120) || m1.slice(0, 120);
+      btns[0].click();
+      await waitFor(() => !document.contains(d1) || !vis(d1), 5000, 200);
+      await sleep(300);
+      const e = new Error('세일즈원이 저장을 거절했어요: ' + why); e.rejected = why; throw e;
+    }
     btnByText('확인', d1).click();
     await waitIdle(180000);
     const d2 = await need(() => { const d = topDialog(); return d && btnByText('확인', d) ? d : null; }, '저장 결과 팝업', 60000);
@@ -277,37 +288,95 @@
   }
   // 최신 조회 결과(fresh) 기준으로 변경을 그리드에 넣고 1000건 단위로 저장한다.
   // qty: 수량 적용 여부, flag: 판매중→일시품절 적용 여부, picks: 판매재개할 행. 실제로 적용한 내역을 돌려준다.
+  // 세일즈원이 저장 전에 거절하면(한 행만 걸려도 전체가 막힘) 수량·일시품절을 먼저 저장하고,
+  // 판매재개는 한 건씩 저장해서 거절된 행만 rejected로 돌려준다.
   async function applyAndSave(g, fresh, { qty, flag, picks = [] }) {
-    const ds = g.getDataSource();
-    const idx = new Map(fresh.map((r, i) => [r.attrPrdCd, i]));
-    const ops = new Map(), done = [], donePicks = [];
-    const add = (i, fn) => { const prev = ops.get(i); ops.set(i, prev ? () => { prev(); fn(); } : fn); };
-    for (const p of buildPlan(fresh)) {
-      const i = idx.get(p.attr); if (i == null) continue;
-      const dq = qty && p.qA !== p.qB, df = flag && p.fA !== p.fB;
-      if (!dq && !df) continue;
-      add(i, () => { if (dq) ds.setValue(i, 'allOrdPsblQty', p.qA); if (df) ds.setValue(i, 'saleFlag', p.fA); });
-      done.push(Object.assign({}, p, { qA: dq ? p.qA : p.qB, fA: df ? p.fA : p.fB }));
-    }
-    for (const r of picks) {
-      const i = idx.get(r.attr); if (i == null) continue;
-      const cur = fresh[i].saleFlag;
-      if (cur !== 'Y' && cur !== 'T') continue;                  // 이미 판매중이면 건너뜀
-      add(i, () => ds.setValue(i, 'saleFlag', cur === 'T' ? 'S' : 'N')); // 일시품절→품절해제, 판매종료→판매중
-      donePicks.push(Object.assign({}, r));
-    }
-    const list = [...ops.entries()];
-    log(`적용 대상 ${list.length}행 (수량·일시품절 ${done.length} · 판매재개 ${donePicks.length})`);
-    for (let k = 0; k < list.length; k += BATCH) {
-      const chunk = list.slice(k, k + BATCH);
+    let ds, idx, planBy;
+    const bind = (g2, rows) => {
+      g = g2; fresh = rows; ds = g.getDataSource();
+      idx = new Map(rows.map((r, i) => [r.attrPrdCd, i]));
+      planBy = new Map(buildPlan(rows).map(p => [p.attr, p]));
+    };
+    const reload = async () => { const g2 = await querySale(); bind(g2, g2.getDataSource().getJsonRows(0, -1)); };
+    bind(g, fresh);
+    const pickBy = new Map(picks.map(r => [r.attr, r]));
+    // 한 행에 넣을 값 [필드, 새 값, 원래 값]과 기록. 지금 그리드 값 기준으로 계산한다.
+    const itemOf = (attr, withPick) => {
+      const i = idx.get(attr); if (i == null) return null;
+      const row = fresh[i], p = planBy.get(attr), sets = [], it = { i, attr, sets, plan: null, pick: null };
+      const dq = !!p && qty && p.qA !== p.qB, df = !!p && flag && p.fA !== p.fB;
+      if (dq) sets.push(['allOrdPsblQty', p.qA, row.allOrdPsblQty]);
+      if (df) sets.push(['saleFlag', p.fA, row.saleFlag]);
+      if (dq || df) it.plan = Object.assign({}, p, { qA: dq ? p.qA : p.qB, fA: df ? p.fA : p.fB });
+      const cur = row.saleFlag;
+      if (withPick && pickBy.has(attr) && (cur === 'Y' || cur === 'T')) {      // 이미 판매중이면 건너뜀
+        sets.push(['saleFlag', cur === 'T' ? 'S' : 'N', cur]);                  // 일시품절→품절해제, 판매종료→판매중
+        it.pick = Object.assign({}, pickBy.get(attr), { f: cur });
+      }
+      return sets.length ? it : null;
+    };
+    const done = [], donePicks = [], rejected = [];
+    // attrs를 그리드에 넣고 저장. 거절되면 넣은 값을 되돌리고 사유를 돌려준다(저장된 것은 없음).
+    const save = async (attrs, withPick) => {
+      const items = attrs.map(a => itemOf(a, withPick)).filter(Boolean);
+      if (!items.length) return null;
       if (g.commit) g.commit(true);
       if (g.checkAll) g.checkAll(false);
-      chunk.forEach(([i, fn]) => { fn(); g.checkRow(i, true); });
+      items.forEach(it => { it.sets.forEach(([f, v]) => ds.setValue(it.i, f, v)); g.checkRow(it.i, true); });
+      try { await clickSave(); }
+      catch (e) {
+        if (!e.rejected) throw e;
+        items.forEach(it => {
+          it.sets.slice().reverse().forEach(([f, , v0]) => ds.setValue(it.i, f, v0));
+          try { ds.setRowState(it.i, 'none', true); } catch (e2) {}
+          g.checkRow(it.i, false);
+        });
+        if (g.commit) g.commit(true);
+        return e.rejected;
+      }
+      items.forEach(it => { if (it.plan) done.push(it.plan); if (it.pick) donePicks.push(it.pick); });
+      return null;
+    };
+    const label = a => { const r = fresh[idx.get(a)] || pickBy.get(a) || {}; return `${r.prdCd || r.prd} · ${r.prdNm || r.nm} · ${a}`; };
+
+    const all = fresh.map(r => r.attrPrdCd).filter(a => itemOf(a, true));
+    const nPick = all.filter(a => itemOf(a, true).pick).length;
+    log(`적용 대상 ${all.length}행 (수량·일시품절 ${all.filter(a => itemOf(a, false)).length} · 판매재개 ${nPick})`);
+    let why = null, k = 0;
+    for (; k < all.length; k += BATCH) {
+      const chunk = all.slice(k, k + BATCH);
       log(`${k + 1}–${k + chunk.length}행 저장 중…`);
-      await clickSave();
+      why = await save(chunk, true);
+      if (why) break;
       log('저장 완료');
     }
-    return { plan: done, picks: donePicks };
+    if (why) {
+      const rest = all.slice(k);
+      const restPicks = rest.filter(a => itemOf(a, true).pick);
+      if (!restPicks.length) throw new Error('세일즈원이 저장을 거절했어요: ' + why);
+      log(`세일즈원이 저장을 거절했어요: ${why}`);
+      let dirty = k > 0;                                        // 앞에서 저장한 게 있으면 화면을 새로 읽는다
+      const plain = rest.filter(a => itemOf(a, false));
+      if (plain.length) {
+        log(`수량·일시품절 ${plain.length}행 먼저 저장`);
+        if (dirty) { await reload(); dirty = false; }
+        for (let j = 0; j < plain.length; j += BATCH) {
+          const w = await save(plain.slice(j, j + BATCH), false);
+          if (w) throw new Error('세일즈원이 수량·일시품절 저장을 거절했어요: ' + w);
+        }
+        log('저장 완료');
+        dirty = true;
+      }
+      log(`판매재개 ${restPicks.length}건을 한 건씩 저장해서 거절된 행을 가려냅니다`);
+      for (const a of restPicks) {
+        if (dirty) { await reload(); dirty = false; }
+        const before = donePicks.length;
+        const w = restPicks.length === 1 && !plain.length ? why : await save([a], true);
+        if (w) { rejected.push(Object.assign({}, pickBy.get(a), { why: w })); log(`판매재개 거절: ${label(a)} — ${w}`, true); }
+        else if (donePicks.length > before) { dirty = true; log(`판매재개 저장: ${label(a)}`); }
+      }
+    }
+    return { plan: done, picks: donePicks, rejected };
   }
   // 저장 내역 누적(같은 SKU는 처음 값 → 마지막 값으로 합침). ④ 점검과 보고에 쓴다.
   function remember(res) {
@@ -316,6 +385,11 @@
     res.plan.forEach(p => { const e = by.get(p.attr); if (e) { e.qA = p.qA; e.fA = p.fA; } else { sv.plan.push(p); by.set(p.attr, p); } });
     const pk = new Set(sv.picks.map(p => p.attr));
     res.picks.forEach(p => { if (!pk.has(p.attr)) { sv.picks.push(p); pk.add(p.attr); } });
+    // 세일즈원이 거절한 판매재개(나중에 저장되면 목록에서 뺀다)
+    const rj = new Map((sv.rej || []).map(p => [p.attr, p]));
+    (res.rejected || []).forEach(p => rj.set(p.attr, p));
+    res.picks.forEach(p => rj.delete(p.attr));
+    sv.rej = [...rj.values()];
     S.saved = sv; persist();
   }
   async function stepSave() {
@@ -329,7 +403,9 @@
     log('저장 직전 재조회');
     const g = await querySale();
     const fresh = g.getDataSource().getJsonRows(0, -1);
-    remember(await applyAndSave(g, fresh, { qty: true, flag: true, picks }));
+    const res = await applyAndSave(g, fresh, { qty: true, flag: true, picks });
+    remember(res);
+    if (res.rejected.length) log(`판매재개 ${res.rejected.length}건은 세일즈원이 거절해서 저장하지 않았어요 (저장 ${res.picks.length}건)`);
     await stepVerify();
   }
 
@@ -349,6 +425,10 @@
     for (const p of sv.picks) {
       const r = by.get(p.attr);
       if (!r || r.saleFlag === 'Y' || r.saleFlag === 'T') nf.push(Object.assign({}, p, { why: '판매재개 미반영(' + (r ? FLAG[r.saleFlag] : '행 없음') + ')' }));
+    }
+    for (const p of sv.rej || []) {
+      const r = by.get(p.attr);
+      if (r && (r.saleFlag === 'Y' || r.saleFlag === 'T')) nf.push(Object.assign({}, p, { why: `판매재개 거절(${FLAG[r.saleFlag]} 유지): ${p.why}` }));
     }
     const nfSet = new Set(nf.map(x => x.attr));
     const mism = rows.filter(r => Number(r.allOrdPsblQty) !== Number(r.ordPsblStockQty) && !nfSet.has(r.attrPrdCd)).map(info);
@@ -381,6 +461,10 @@
     if (sv.picks.length) {
       L.push(`- 판매재개 ${sv.picks.length}건`);
       sv.picks.forEach(p => L.push(`  - ${p.prd} · ${p.nm} · ${p.a1}/${p.a2} (${FLAG[p.f]}→판매중)`));
+    }
+    if ((sv.rej || []).length) {
+      L.push(`- 판매재개 거절 ${sv.rej.length}건 (세일즈원이 저장을 받지 않음)`);
+      sv.rej.forEach(p => L.push(`  - ${p.prd} · ${p.nm} · ${p.a1}/${p.a2} (${FLAG[p.f]}) — ${p.why}`));
     }
     if (S.verify) {
       const v = S.verify;
@@ -434,6 +518,8 @@
     const d = topDialog(); L.push('\n## 현재 팝업'); L.push(d ? d.outerHTML.replace(/\s+/g, ' ').slice(0, 1500) : '- 없음');
     L.push('\n## 오류 기록'); L.push(D.errors.length ? D.errors.map(e => '- ' + e).join('\n') : '- 없음');
     L.push('\n## 변경안(앞 30건)'); L.push(S.plan.slice(0, 30).map(p => `- ${p.attr} ${p.qB}→${p.qA} ${p.fB}→${p.fA}`).join('\n') || '- 없음');
+    L.push('\n## 체크한 판매재개'); L.push(S.rep.filter(r => r.pick).slice(0, 30).map(r => `- ${r.attr} ${r.nm} ${r.a1}/${r.a2} ${r.f}(${FLAG[r.f]}) 수량 ${r.q}`).join('\n') || '- 없음');
+    const rj = (S.saved && S.saved.rej) || []; if (rj.length) { L.push('\n## 세일즈원이 거절한 판매재개'); L.push(rj.map(r => `- ${r.attr} ${r.nm} ${r.f}(${FLAG[r.f]}) — ${r.why}`).join('\n')); }
     L.push('\n## 최근 로그'); L.push(D.logs.slice(-80).join('\n') || '- 없음');
     return L.join('\n');
   }
