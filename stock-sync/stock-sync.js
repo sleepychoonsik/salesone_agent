@@ -1,5 +1,5 @@
 /* =========================================================================
- * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1
+ * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1.1
  *  - 직매입 재고/평가감 현황(영업부서 S31)에서 SJ와니·AM 상품코드 추출
  *  - 판매상태/수량관리: 전체주문가능수량 = 주문가능재고(A), 주문가능재고 ≤ 0 인 판매중 → 일시품절
  *  - 재고 있는데 판매종료/일시품절인 SKU는 체크한 것만 판매중으로 전환
@@ -12,7 +12,7 @@
 (async () => {
   'use strict';
   const TITLE = '재고동기화';
-  const VER = 'v1.1';
+  const VER = 'v1.1.1';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__SSY_FRESH) {
     try {
@@ -472,6 +472,7 @@
 .ib{width:32px;height:32px;border:0;border-radius:10px;background:transparent;color:var(--fg-3);font:500 18px/1 var(--font);cursor:pointer}
 .ib:hover{background:var(--sf-2);color:var(--fg)}
 .b{padding:16px 18px 18px;overflow:auto;display:flex;flex-direction:column;gap:12px}
+.b>*{flex-shrink:0}
 /* buttons — Montage small (32 / r10 / caption1 bold) & medium (40 / r12 / label1 bold) */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;border:0;cursor:pointer;font-family:var(--font);white-space:nowrap;transition:background .12s,box-shadow .12s}
 .btn.md{min-height:40px;padding:10px 16px;border-radius:12px;font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}
@@ -498,13 +499,14 @@
 .sc .v{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.012em;font-variant-numeric:tabular-nums}
 .sc.brand .v{color:var(--brand)}
 /* section message */
-.msg{display:flex;gap:10px;padding:12px 14px;border-radius:12px;font-size:13px;line-height:18px;letter-spacing:.0194em;background:var(--sf-3);color:var(--fg-2)}
+.msg{display:flex;gap:10px;padding:16px 16px;border-radius:12px;font-size:13px;line-height:18px;letter-spacing:.0194em;background:var(--sf-3);color:var(--fg-2)}
 .msg .dot{flex:none;width:18px;height:18px;border-radius:9999px;display:grid;place-items:center;font:700 11px/1 var(--font);color:#fff;background:var(--fg-3);margin-top:0}
 .msg.brand{background:var(--brand-subtle)}.msg.brand .dot{background:var(--brand)}
 .msg.caution{background:var(--cau-sf)}.msg.caution .dot{background:var(--cau)}
 .msg.negative{background:var(--neg-sf)}.msg.negative .dot{background:var(--neg)}
 .msg.positive{background:var(--pos-sf)}.msg.positive .dot{background:var(--pos)}
-.msg .c{flex:1;min-width:0}.msg .c strong{display:block;color:var(--fg);font-weight:600;margin-bottom:2px}
+.msg .c{flex:1;min-width:0}.msg .c strong{display:block;color:var(--fg);font-weight:600;margin-bottom:4px}
+.msg .ml{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-3);max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:16px}
 .msg .act{display:flex;gap:6px;margin-top:10px}
 /* section header */
 .sh{display:flex;align-items:center;gap:6px;font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}
@@ -548,7 +550,7 @@ details[open] summary::before{transform:rotate(90deg)}
       <button class="btn sm outlined" id="s1">① 대상 추출</button>
       <button class="btn sm outlined" id="s2">② 조회·수량 적용</button>
       <button class="btn sm primary" id="s3">③ 판매상태 저장</button>
-      <button class="btn sm outlined" id="s4">④ 점검</button>
+      <button class="btn sm outlined" id="s4" title="저장하지 않고 다시 조회해서 확인만 합니다">④ 점검만 다시</button>
     </div>
     <div id="ask"></div>
     <div id="view"></div>
@@ -604,7 +606,7 @@ details[open] summary::before{transform:rotate(90deg)}
       const list = v.nf.map(p => `${p.prd} · ${p.nm} · ${p.attr} — ${p.why}`).concat(v.mism.map(p => `${p.prd} · ${p.nm} · ${p.attr} — 남은 불일치`));
       h += `<div class="msg ${clean ? 'positive' : 'caution'}"><span class="dot">${clean ? '✓' : '!'}</span><div class="c"><strong>점검 ${clean ? '이상 없음' : '확인 필요'}</strong>
         미반영 ${v.nf.length} · 남은 불일치 ${v.mism.length} · 판매중 0재고 ${v.soLeft.length} · 대상 외 수정 ${v.outside}
-        ${list.length ? '<br>' + list.map(esc).join('<br>') : ''}</div></div>`;
+        ${list.length ? '<div class="ml">' + list.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' : ''}</div></div>`;
     }
     if (nApplied && !S.verify) h += `<div class="msg positive"><span class="dot">✓</span><div class="c"><strong>수량 ${nApplied}건 자동 적용</strong>전체주문가능수량을 주문가능재고에 맞춰 저장했어요.${nq ? ` 아직 다른 ${nq}건은 아래 표에서 확인해주세요.` : ''}</div></div>`;
     if (S.plan.length && !S.verify) {
