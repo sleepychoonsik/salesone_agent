@@ -1,5 +1,5 @@
 /* =========================================================================
- * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1.2
+ * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1.3
  *  - 직매입 재고/평가감 현황(영업부서 S31)에서 SJ와니·AM 상품코드 추출
  *  - 판매상태/수량관리: 전체주문가능수량 = 주문가능재고(A), 주문가능재고 ≤ 0 인 판매중 → 일시품절
  *  - 재고 있는데 판매종료/일시품절인 SKU는 체크한 것만 판매중으로 전환
@@ -12,7 +12,7 @@
 (async () => {
   'use strict';
   const TITLE = '재고동기화';
-  const VER = 'v1.1.2';
+  const VER = 'v1.1.3';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__SSY_FRESH) {
     try {
@@ -469,6 +469,8 @@
 .ib:hover{background:var(--sf-2);color:var(--fg)}
 .b{padding:16px 18px 18px;overflow:auto;display:flex;flex-direction:column;gap:12px}
 .b>*{flex-shrink:0}
+#view{display:flex;flex-direction:column;gap:12px}
+#view:empty,#ask:empty{display:none}
 /* buttons — Montage small (32 / r10 / caption1 bold) & medium (40 / r12 / label1 bold) */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;border:0;cursor:pointer;font-family:var(--font);white-space:nowrap;transition:background .12s,box-shadow .12s}
 .btn.md{min-height:40px;padding:10px 16px;border-radius:12px;font-size:14px;line-height:20px;font-weight:600;letter-spacing:.0145em}
