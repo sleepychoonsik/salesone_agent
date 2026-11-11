@@ -1,5 +1,5 @@
 /* =========================================================================
- * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1.1
+ * [세일즈원 자동화] 재고동기화 (SJ와니 · AM) v1.1.2
  *  - 직매입 재고/평가감 현황(영업부서 S31)에서 SJ와니·AM 상품코드 추출
  *  - 판매상태/수량관리: 전체주문가능수량 = 주문가능재고(A), 주문가능재고 ≤ 0 인 판매중 → 일시품절
  *  - 재고 있는데 판매종료/일시품절인 SKU는 체크한 것만 판매중으로 전환
@@ -12,7 +12,7 @@
 (async () => {
   'use strict';
   const TITLE = '재고동기화';
-  const VER = 'v1.1.1';
+  const VER = 'v1.1.2';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__SSY_FRESH) {
     try {
@@ -46,7 +46,6 @@
   const HASH_STOCK = '#/logistics/delivery/DirectBuyStock';
   const HASH_SALE = '#/product/product/bundle/SaleStQtyMng';
   const BATCH = 1000;                                   // 저장 1회 최대 건수
-  const AUTO_QTY_LIMIT = n => Math.max(200, n * 0.3);   // 수량 자동 적용 상한: 이보다 많으면 적용 전에 확인을 받는다
   const isTargetSku = s => { s = String(s || ''); return s.includes('SJ와니') || /sj wani/i.test(s) || /(?<![A-Za-z])AM(?![A-Za-z])/.test(s); };
   const isPrdCd = c => /^1\d{9}$/.test(String(c || ''));
   const FLAG = { N: '판매중', Y: '판매종료', T: '일시품절', S: '품절해제' };
@@ -237,11 +236,8 @@
     let plan = buildPlan(rows);
     const nq = plan.filter(p => p.qA !== p.qB).length;
     if (nq) {
-      // 수량은 확인 없이 바로 적용한다. 평소보다 지나치게 많으면(조회 이상 가능성) 확인을 받는다.
-      let go = true;
-      if (nq > AUTO_QTY_LIMIT(rows.length))
-        go = await ask('caution', `수량 변경이 ${nq}건으로 평소보다 많아요.`, `전체 SKU ${rows.length}건 중 ${nq}건입니다. 그대로 적용할까요?`, '적용', '건너뛰기');
-      if (go) {
+      // 수량은 확인 없이 바로 적용한다.
+      {
         D.step = '② 수량 자동 적용';
         log(`수량 ${nq}건 자동 적용`);
         remember(await applyAndSave(g, rows, { qty: true, flag: false }));
@@ -252,7 +248,7 @@
         plan = buildPlan(rows);
         const left = plan.filter(p => p.qA !== p.qB).length;
         log(left ? `수량 미반영 ${left}건 (판매종료 상품은 반영되지 않을 수 있어요)` : '수량 모두 반영됨');
-      } else log('수량 자동 적용 건너뜀');
+      }
     }
     const after = new Map(plan.map(p => [p.attr, p]));
     const prevPick = new Set((S.rep || []).filter(r => r.pick).map(r => r.attr));
