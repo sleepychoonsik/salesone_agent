@@ -1,8 +1,11 @@
 /* =========================================================================
- * [세일즈원 자동화] 장기무이자(무10) 세팅 v1.1
+ * [세일즈원 자동화] 방송중 무이자 세팅 v1.2
  *  - 상품조회/수정 > 가격/프로모션 기능을 세일즈원 API로 처리 (화면과 동일한 요청)
- *  - 직매입 : 기존 무이자 종료 → 200,000 → 무10(당사100) → 가격 원복 → 기존 무이자 복구
- *  - 위수탁 : [1단계] 기존 무이자 종료 → 200,000 예약 → 무10(당사50/업체50) 합의요청
+ *  - 개월수는 상품별로 지정(기본 10개월, 2~12개월). 당사 무이자 할부 규정(판매가별 최대 개월) 안이면 가격은 건드리지 않음
+ *    규정: 5만 미만 없음 / 5~10만 미만 3개월 / 10~20만 미만 9개월 / 20만 이상 12개월 → 규정 밖이면 기준가로 올린 뒤 세팅·원복
+ *  - 직매입 : 기존 무이자 종료 → (기준가 인상) → 방송중 무이자(당사100) → (가격 원복) → 기존 무이자 복구
+ *  - 위수탁 : 3개월 이하는 당사100이라 직매입처럼 한 번에 처리, 4개월 이상은 당사50/업체50
+ *             [1단계] 기존 무이자 종료 → (기준가 예약) → 방송중 무이자(당사50/업체50) 합의요청
  *             [2단계: 합의 승인 후] 가격 원복(마진48%) → 기존 무이자 복구(업체부담>0이면 합의요청)
  *  - 업체부담 > 0 인 무이자는 반드시 협력사 합의 요청으로만 등록 (직접 등록 금지)
  *  - 문제가 생기면 패널의 [진단 내용 복사]로 버전·단계·오류·URL·API 기록·로그를 복사해 Claude에게 붙여넣는다.
@@ -10,7 +13,7 @@
 (async () => {
   'use strict';
   const TITLE = '장기무이자 세팅 자동화';
-  const VER = 'v1.1';
+  const VER = 'v1.2';
   // 최신 버전 확인: raw 주소는 최대 5분 캐시되므로, 최신 커밋을 직접 조회해 더 새 버전이 있으면 그걸 실행한다
   if (!window.__NIF_FRESH) {
     try {
@@ -34,11 +37,14 @@
   const BFF = 'https://everest-bff.gshs.co.kr';
   const PANEL_ID = '__nif_panel';
   const LS_KEY = '__nif_state_v1';
-  const NOINT_MM = 10;
-  const MIN_PRICE = 200000;
+  const DEFAULT_MM = 10;
+  const MM_MIN = 2, MM_MAX = 12; // 13개월 이상은 판매가와 무관하게 규정 외(품의 대상) → 지원하지 않음
+  // 당사 무이자 할부 규정(판매가별 최대 개월): 5만 미만 없음 / 5~10만 미만 3 / 10~20만 미만 9 / 20만 이상 12
+  const minPriceFor = mm => mm <= 3 ? 50000 : mm <= 9 ? 100000 : 200000;
+  // 위수탁 업체부담율: 3개월 이하는 당사 100, 4개월 이상은 당사 50 / 업체 50 (직매입은 항상 당사 100)
+  const supRateFor = (consign, mm) => consign && mm > 3 ? 50 : 0;
   const MAX_DROP = 0.41;      // 업체지급액 기준 1회 최대 하락률
   const CONSIGN_GIV = 0.52;   // 위수탁 업체지급율 (마진 48%)
-  const NOINT_SUP_CONSIGN = 50; // 위수탁 무10 업체부담율
 
   if (!/nsalesone\.gshs\.co\.kr$/.test(location.host)) {
     alert('[' + TITLE + '] n세일즈원(nsalesone.gshs.co.kr) 화면에서 실행해주세요.');
@@ -129,8 +135,8 @@
   const cRows = d => (d.noInterestPromotions || []).filter(r => r.chanlCd === 'C');
 
   /* ---------------- 가격 단계 (직전가 대비 41% 이내, 900원 끝) ---------------- */
-  function steps(target) {
-    const s = []; let cur = MIN_PRICE;
+  function steps(target, from) {
+    const s = []; let cur = from;
     for (let g = 0; g < 10; g++) {
       if ((cur - target) / cur <= MAX_DROP) { s.push(target); break; }
       let n = Math.ceil(cur * (1 - MAX_DROP) / 100) * 100;
@@ -197,29 +203,37 @@
       rs: fmt(addMin(e, 1)).replace(/:\d\d$/, ':00')         // 12:06:00
     };
   }
-  function analyze(cd, d, dc, win) {
+  function analyze(cd, d, dc, win, mmIn) {
     const cur = latestPrice(d) || {};
     const consign = isConsign(d);
     const rows = cRows(d);
-    const has10 = rows.find(r => r.noIntMmCnt === NOINT_MM && r.validStrDtm === win.s);
     const st = loadState()[stKey(cd, win)];
-    const oldRow = rows.find(r => r.noIntMmCnt !== NOINT_MM && r.validStrDtm < win.s && r.validEndDtm >= win.s)
-      || rows.find(r => r.noIntMmCnt !== NOINT_MM && r.validEndDtm === win.oldEnd);
-    // 원래 가격: 저장된 값 → 없으면 200,000이 아닌 마지막 가격 → 없으면 현재 마지막 가격
-    const non200 = prices(d).filter(x => x.salePrc !== MIN_PRICE).slice(-1)[0];
-    const basePrc = (st && st.prc) || (cur.salePrc === MIN_PRICE && non200 ? non200.salePrc : cur.salePrc);
-    const restoreRow = rows.find(r => r.noIntMmCnt !== NOINT_MM && r.validStrDtm === win.rs);
+    const newRow = rows.find(r => r.validStrDtm === win.s);   // 방송 구간에 이미 등록된 무이자(있으면 그 개월수가 기준)
+    const mm = newRow ? newRow.noIntMmCnt : mmIn;
+    const minPrc = minPriceFor(mm);                           // 이 개월수가 규정 안에 드는 최소 판매가
+    const sup = supRateFor(consign, mm);
+    const oldRow = rows.find(r => r.validStrDtm < win.s && r.validEndDtm >= win.s)
+      || rows.find(r => r.validEndDtm === win.oldEnd);
+    // 원래 가격: 저장된 값 → 없으면 기준가가 아닌 마지막 가격 → 없으면 현재 마지막 가격
+    const nonMin = prices(d).filter(x => x.salePrc !== minPrc).slice(-1)[0];
+    const basePrc = (st && st.prc) || (cur.salePrc === minPrc && nonMin ? nonMin.salePrc : cur.salePrc);
+    const restoreRow = rows.find(r => r.validStrDtm === win.rs);
+    const old = st ? st.old : (oldRow ? { mm: oldRow.noIntMmCnt, sup: oldRow.noIntInsmFeeSupShrRt || 0, end: oldRow.validEndDtm > win.s ? oldRow.validEndDtm : END } : null);
+    const skip = !newRow && !st && old && old.mm >= mm ? `기존 무이자가 ${old.mm}개월(무${mm} 이상)` : '';
     return {
-      cd, nm: d.promotion.prdNm, consign, cur, basePrc, oldRow, has10, restoreRow, dc,
-      needRaise: basePrc < MIN_PRICE, steps: basePrc < MIN_PRICE ? steps(basePrc) : [],
-      old: st ? st.old : (oldRow ? { mm: oldRow.noIntMmCnt, sup: oldRow.noIntInsmFeeSupShrRt || 0, end: oldRow.validEndDtm > win.s ? oldRow.validEndDtm : END } : null)
+      cd, nm: d.promotion.prdNm, consign, cur, basePrc, oldRow, newRow, restoreRow, dc, old,
+      mm, mmIn, minPrc, sup, twoStage: sup > 0, skip,
+      needRaise: basePrc < minPrc, steps: basePrc < minPrc ? steps(basePrc, minPrc) : []
     };
   }
 
   /* ---------------- 실행: 직매입 ---------------- */
+  // 한 번에 끝나는 흐름: 직매입 전체 + 위수탁 중 당사 100(3개월 이하)
   async function runDirect(a, win, log) {
     const cd = a.cd;
-    if (a.has10) { log(cd, '이미 무10 등록됨 — 건너뜀'); return; }
+    if (a.newRow) { log(cd, `이미 무${a.mm} 등록됨 — 건너뜀`); return; }
+    if (a.skip) { log(cd, a.skip + ' — 건너뜀'); return; }
+    if (a.consign && a.old && a.old.sup > 0 && a.dc.inProgressSupplierAgree) { log(cd, '진행 중인 협력사 합의가 있음(기존 무이자 복구에 합의 필요) — 끝난 뒤 다시 실행'); return; }
     if (a.oldRow && a.oldRow.validEndDtm > win.oldEnd) {
       const r = await endNoint(a.oldRow, win.oldEnd); log(cd, `기존 무이자 ${a.oldRow.noIntMmCnt}개월 종료 → ${short(win.oldEnd)} ${ok(r) ? '완료' : '실패: ' + msg(r)}`);
       if (!ok(r)) return;
@@ -227,17 +241,17 @@
     let T = null;
     if (a.needRaise) {
       T = nextFreeMinute(a);
-      const r = await postPrice(cd, false, fmt(T), MIN_PRICE, a.cur, a.dc.agreeDocNo);
-      log(cd, `200,000 @${short(fmt(T))} ${ok(r) ? '예약' : '실패: ' + msg(r)}`);
+      const r = await postPrice(cd, a.consign, fmt(T), a.minPrc, a.cur, a.dc.agreeDocNo);
+      log(cd, `${a.minPrc.toLocaleString()} @${short(fmt(T))} ${ok(r) ? '예약' : '실패: ' + msg(r)}`);
       if (!ok(r)) return;
     }
-    // 무이자 한도는 '마지막 가격'으로 검사 → 원복 가격보다 먼저 무10 등록
-    const r10 = await insNointGs100(cd, win.s, win.e, NOINT_MM);
-    log(cd, `무10(당사100) ${short(win.s)}~${short(win.e)} ${ok(r10) ? '완료' : '실패: ' + msg(r10)}`);
+    // 무이자 한도는 '마지막 가격'으로 검사 → 원복 가격보다 먼저 방송중 무이자 등록
+    const r10 = await insNointGs100(cd, win.s, win.e, a.mm);
+    log(cd, `무${a.mm}(당사100) ${short(win.s)}~${short(win.e)} ${ok(r10) ? '완료' : '실패: ' + msg(r10)}`);
     if (a.needRaise) {
       for (let i = 0; i < a.steps.length; i++) {
         const t = fmt(addMin(T, i + 1));
-        const r = await postPrice(cd, false, t, a.steps[i], a.cur, a.dc.agreeDocNo);
+        const r = await postPrice(cd, a.consign, t, a.steps[i], a.cur, a.dc.agreeDocNo);
         log(cd, `원복 ${a.steps[i].toLocaleString()} @${short(t)} ${ok(r) ? '예약' : '실패: ' + msg(r)}`);
       }
     }
@@ -258,35 +272,36 @@
   /* ---------------- 실행: 위수탁 1단계 ---------------- */
   async function runConsign1(a, win, log, raiseAt) {
     const cd = a.cd;
-    if (a.has10) { log(cd, '이미 무10 등록(승인)됨 — 2단계로 진행하세요'); return; }
+    if (a.newRow) { log(cd, `이미 무${a.mm} 등록(승인)됨 — 2단계로 진행하세요`); return; }
+    if (a.skip) { log(cd, a.skip + ' — 건너뜀'); return; }
     if (a.dc.inProgressSupplierAgree) { log(cd, '진행 중인 협력사 합의가 있음 — 끝난 뒤 다시 실행'); return; }
     const state = loadState();
-    state[stKey(cd, win)] = { prc: a.basePrc, old: a.old, at: fmt(new Date()) };
+    state[stKey(cd, win)] = { prc: a.basePrc, old: a.old, mm: a.mm, at: fmt(new Date()) };
     saveState(state);
     if (a.oldRow && a.oldRow.validEndDtm > win.oldEnd) {
       const r = await endNoint(a.oldRow, win.oldEnd); log(cd, `기존 무이자 ${a.oldRow.noIntMmCnt}개월 종료 → ${short(win.oldEnd)} ${ok(r) ? '완료' : '실패: ' + msg(r)}`);
       if (!ok(r)) return;
     }
-    if (a.needRaise && a.cur.salePrc !== MIN_PRICE) {
+    if (a.needRaise && a.cur.salePrc !== a.minPrc) {
       const T = raiseAt > new Date() ? raiseAt : nextFreeMinute(a);
-      const r = await postPrice(cd, true, fmt(T), MIN_PRICE, a.cur, a.dc.agreeDocNo);
-      log(cd, `200,000(업체지급 ${Math.round(MIN_PRICE * CONSIGN_GIV).toLocaleString()}, 마진48%) @${short(fmt(T))} ${ok(r) ? '예약' : '실패: ' + msg(r)}`);
+      const r = await postPrice(cd, true, fmt(T), a.minPrc, a.cur, a.dc.agreeDocNo);
+      log(cd, `${a.minPrc.toLocaleString()}(업체지급 ${Math.round(a.minPrc * CONSIGN_GIV).toLocaleString()}, 마진48%) @${short(fmt(T))} ${ok(r) ? '예약' : '실패: ' + msg(r)}`);
       if (!ok(r)) return;
     }
-    const r = await requestAgree(cd, a.dc, win.s, win.e, NOINT_MM, NOINT_SUP_CONSIGN);
-    log(cd, `무10(당사50/업체50) ${short(win.s)}~${short(win.e)} ${ok(r) ? '합의요청' : '실패: ' + msg(r)}`, ok(r));
+    const r = await requestAgree(cd, a.dc, win.s, win.e, a.mm, a.sup);
+    log(cd, `무${a.mm}(당사${100 - a.sup}/업체${a.sup}) ${short(win.s)}~${short(win.e)} ${ok(r) ? '합의요청' : '실패: ' + msg(r)}`, ok(r));
   }
 
   /* ---------------- 실행: 위수탁 2단계 (합의 승인 후) ---------------- */
   async function runConsign2(a, win, log) {
     const cd = a.cd;
-    if (!a.has10) { log(cd, '무10 아직 미승인 — 합의 후 다시 실행'); return; }
-    // 가격: 아직 시작 안 한 200,000 예약은 삭제(노출 0), 이미 적용 중이면 41% 이내 n차 원복
+    if (!a.newRow) { log(cd, `무${a.mm} 아직 미승인 — 합의 후 다시 실행`); return; }
+    // 가격: 아직 시작 안 한 기준가 예약은 삭제(노출 0), 이미 적용 중이면 41% 이내 n차 원복
     const all = prices(a.d);
-    const fut200 = all.find(x => x.salePrc === MIN_PRICE && x.validStrDtm > fmt(new Date()));
-    const live200 = a.cur.salePrc === MIN_PRICE && a.cur.validStrDtm <= fmt(new Date()) && a.basePrc < MIN_PRICE;
-    if (fut200 && a.basePrc < MIN_PRICE) {
-      const r = await deletePrice(cd, fut200); log(cd, `200,000 예약(@${short(fut200.validStrDtm)}) 삭제 ${ok(r) ? '완료' : '실패: ' + msg(r)}`);
+    const fut200 = all.find(x => x.salePrc === a.minPrc && x.validStrDtm > fmt(new Date()));
+    const live200 = a.cur.salePrc === a.minPrc && a.cur.validStrDtm <= fmt(new Date()) && a.basePrc < a.minPrc;
+    if (fut200 && a.basePrc < a.minPrc) {
+      const r = await deletePrice(cd, fut200); log(cd, `${a.minPrc.toLocaleString()} 예약(@${short(fut200.validStrDtm)}) 삭제 ${ok(r) ? '완료' : '실패: ' + msg(r)}`);
     } else if (live200) {
       const T = nextFreeMinute(a);
       for (let i = 0; i < a.steps.length; i++) {
@@ -315,25 +330,29 @@
   const root = el.attachShadow({ mode: 'open' });   // 세일즈원(MUI) 스타일과 섞이지 않게 Shadow DOM 안에 그린다
   root.innerHTML = `<style>${SO_UI_CSS}</style>
 <div class="so-panel">
-  <div class="so-panel__head"><div class="so-panel__title"><span class="so-panel__dot"></span>${TITLE}<span class="so-chip">${VER}</span><span class="so-chip so-chip--neutral">무10</span></div>
+  <div class="so-panel__head"><div class="so-panel__title"><span class="so-panel__dot"></span>${TITLE}<span class="so-chip">${VER}</span><span class="so-chip so-chip--neutral">방송중 무이자</span></div>
     <button class="so-icon-btn" id="nif-min" title="접기">–</button><button class="so-icon-btn" id="nif-x" title="닫기">×</button></div>
   <div class="so-panel__body" id="nif-body">
     <div class="so-steps" id="nif-steps"></div>
-    <label class="so-field"><span class="so-field__label">상품코드 (한 줄에 하나 · 직매입/위수탁은 자동 판별)</span>
-      <textarea class="so-textarea" id="nif-codes" placeholder="1131710679&#10;1131688507"></textarea></label>
+    <label class="so-field"><span class="so-field__label">상품코드 (한 줄에 하나 · 코드 뒤에 개월수를 적으면 그 상품만 다르게, 예: 1131710679 6)</span>
+      <textarea class="so-textarea" id="nif-codes" placeholder="1131710679&#10;1131688507 6&#10;1131700001 3"></textarea></label>
+    <div class="so-grid2" style="align-items:end">
+      <label class="so-field"><span class="so-field__label">무이자 개월수 (개월수를 안 적은 상품에 적용)</span><select class="so-input" id="nif-mm"></select></label>
+      <div><button class="so-btn so-btn--sm so-btn--outlined" id="nif-mmall" title="고른 개월수를 모든 상품코드 뒤에 적어 넣어요">전체 상품에 일괄 적용</button></div>
+    </div>
     <div class="so-grid2">
       <label class="so-field"><span class="so-field__label">방송 시작</span><input class="so-input" id="nif-bs" placeholder="2026-11-06 09:25"></label>
       <label class="so-field"><span class="so-field__label">방송 종료</span><input class="so-input" id="nif-be" placeholder="2026-11-06 11:35"></label>
     </div>
-    <label class="so-field"><span class="so-field__label">위수탁 200,000 적용 시각 (비우면 방송 전날 03:00)</span>
+    <label class="so-field"><span class="so-field__label">위수탁 가격 인상 적용 시각 (규정 밖일 때만 · 비우면 방송 전날 03:00)</span>
       <input class="so-input" id="nif-ra" placeholder="2026-11-05 03:00"></label>
-    <div class="so-hint">무10 구간은 방송 30분 전부터 30분 뒤까지예요. 기존 무이자는 그 1초 전에 끝내고, 끝난 다음 분부터 복구해요. 위수탁 가격은 마진 48%로 맞춰요.</div>
+    <div class="so-hint">무이자 구간은 방송 30분 전부터 30분 뒤까지예요. 기존 무이자는 그 1초 전에 끝내고, 끝난 다음 분부터 복구해요.<br>규정(5만↑ 3개월 · 10만↑ 9개월 · 20만↑ 12개월) 안이면 가격은 그대로 두고, 밖이면 기준가로 올린 뒤 원복해요. 위수탁은 3개월 이하 당사 100, 4개월 이상 50/50(합의)이에요.</div>
     <div class="so-row">
       <button class="so-btn so-btn--sm so-btn--outlined" id="nif-prev">① 미리보기</button>
       <button class="so-btn so-btn--sm so-btn--primary" id="nif-run1" title="직매입 전체 · 위수탁 1단계" disabled>② 실행</button>
       <button class="so-btn so-btn--sm so-btn--outlined" id="nif-run2" title="협력사 합의가 승인된 뒤" disabled>③ 위수탁 2단계</button>
     </div>
-    <div class="so-hint">② 실행은 직매입 전체와 위수탁 1단계를 처리해요. ③ 위수탁 2단계는 협력사 합의가 승인된 뒤에 눌러요.</div>
+    <div class="so-hint">② 실행은 직매입 전체(위수탁 3개월 이하 포함)와 위수탁 1단계를 처리해요. ③ 위수탁 2단계는 협력사 합의가 승인된 뒤에 눌러요.</div>
     <div id="nif-ask" class="so-slot"></div>
     <div id="nif-table" class="so-view"></div>
     <div id="nif-agree" class="so-slot"></div>
@@ -355,7 +374,18 @@
       const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
       document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up); };
   })();
-  try { const s = JSON.parse(sessionStorage.getItem('__nif_inputs') || '{}'); if (s.c) $('nif-codes').value = s.c; if (s.bs) $('nif-bs').value = s.bs; if (s.be) $('nif-be').value = s.be; if (s.ra) $('nif-ra').value = s.ra; } catch (e) {}
+  for (let m = MM_MIN; m <= MM_MAX; m++) $('nif-mm').insertAdjacentHTML('beforeend', `<option value="${m}"${m === DEFAULT_MM ? ' selected' : ''}>${m}개월${m === DEFAULT_MM ? ' (기본)' : ''}</option>`);
+  // 상품코드 + (선택) 개월수: "1131710679", "1131710679 6", "1131710679\t무6", "1131710679 6개월"
+  const CODE_RE = /\b(1\d{9})\b(?:[ \t,:\/]*무?(\d{1,2})(?!\d)[ \t]*(?:개월)?)?/g;
+  $('nif-mmall').onclick = () => {
+    const mm = $('nif-mm').value;
+    const cds = [...new Set([...$('nif-codes').value.matchAll(CODE_RE)].map(m => m[1]))];
+    if (!cds.length) { logEl.textContent = '⚠ 상품코드를 먼저 넣어주세요'; return; }
+    $('nif-codes').value = cds.map(c => c + ' ' + mm).join('\n');
+    plan = null; stage = 0; renderSteps(); busy(false);
+    logEl.textContent = `상품 ${cds.length}개에 무이자 ${mm}개월을 일괄 적용했어요. ① 미리보기를 눌러주세요.`;
+  };
+  try { const s = JSON.parse(sessionStorage.getItem('__nif_inputs') || '{}'); if (s.mm) $('nif-mm').value = s.mm; if (s.c) $('nif-codes').value = s.c; if (s.bs) $('nif-bs').value = s.bs; if (s.be) $('nif-be').value = s.be; if (s.ra) $('nif-ra').value = s.ra; } catch (e) {}
 
   // 단계 표시: 0 = ① 미리보기 차례, 1 = ② 실행 차례, 2 = ③ 위수탁 2단계 차례, 3 = 모두 끝
   let stage = 0;
@@ -396,9 +426,16 @@
 
   let plan = null;
   function readInputs() {
-    const codes = [...new Set(($('nif-codes').value.match(/\b1\d{9}\b/g) || []))];
+    const defMm = +$('nif-mm').value || DEFAULT_MM;
+    const map = new Map();
+    for (const m of $('nif-codes').value.matchAll(CODE_RE)) {
+      const mm = m[2] ? +m[2] : defMm;
+      if (mm < MM_MIN || mm > MM_MAX) throw new Error(`${m[1]}: 개월수 ${mm} — ${MM_MIN}~${MM_MAX}개월만 가능합니다 (13개월 이상은 품의 대상)`);
+      map.set(m[1], mm);
+    }
+    const codes = [...map].map(([cd, mm]) => ({ cd, mm }));
     const bs = parseDt($('nif-bs').value), be = parseDt($('nif-be').value);
-    try { sessionStorage.setItem('__nif_inputs', JSON.stringify({ c: $('nif-codes').value, bs: $('nif-bs').value, be: $('nif-be').value, ra: $('nif-ra').value })); } catch (e) {}
+    try { sessionStorage.setItem('__nif_inputs', JSON.stringify({ c: $('nif-codes').value, bs: $('nif-bs').value, be: $('nif-be').value, ra: $('nif-ra').value, mm: $('nif-mm').value })); } catch (e) {}
     if (!codes.length) throw new Error('상품코드(1로 시작하는 10자리)를 넣어주세요');
     if (!bs || !be || be <= bs) throw new Error('방송 시작/종료를 "2026-11-06 09:25" 형식으로 넣어주세요');
     let ra = parseDt($('nif-ra').value);
@@ -407,32 +444,34 @@
   }
   function render(list, win) {
     const okList = list.filter(a => !a.err);
-    const nD = okList.filter(a => !a.consign).length, nC = okList.filter(a => a.consign).length, nE = list.length - okList.length, n10 = okList.filter(a => a.has10).length;
+    const nD = okList.filter(a => !a.consign).length, nC = okList.filter(a => a.consign).length, nE = list.length - okList.length, n10 = okList.filter(a => a.newRow).length, nR = okList.filter(a => !a.newRow && !a.skip && a.needRaise).length;
     const rows = list.map(a => {
-      if (a.err) return `<tr><td>${esc(a.cd)}</td><td colspan="4"><span class="so-tag so-tag--error">오류</span> ${esc(a.err)}</td></tr>`;
+      if (a.err) return `<tr><td>${esc(a.cd)}</td><td colspan="5"><span class="so-tag so-tag--error">오류</span> ${esc(a.err)}</td></tr>`;
       const old = a.old ? `${a.old.mm}개월 (업체${a.old.sup})` : '없음';
-      const st = a.has10 ? '무10 등록됨' : (a.consign ? '1단계: 무10 합의요청' : '전체 진행');
-      const pr = a.has10 ? '' : a.needRaise ? `가격 200,000 → ${a.steps.map(n => n.toLocaleString()).join(' → ')}` : `가격 변경 없음 (${Number(a.basePrc).toLocaleString()})`;
+      const st = a.newRow ? `무${a.mm} 등록됨${a.mm !== a.mmIn ? ` (입력 ${a.mmIn}개월과 다름)` : ''}` : a.skip ? `건너뜀: ${esc(a.skip)}` : (a.twoStage ? `1단계: 무${a.mm} 합의요청` : '전체 진행');
+      const pr = a.newRow || a.skip ? '' : a.needRaise ? `가격 ${a.minPrc.toLocaleString()} → ${a.steps.map(n => n.toLocaleString()).join(' → ')}` : '가격 변경 없음 (규정 내)';
       return `<tr><td>${esc(a.cd)}<span class="so-sub">${esc(a.nm)}</span></td>
         <td><span class="so-tag so-tag--${a.consign ? 'ended' : 'on'}">${a.consign ? '위수탁' : '직매입'}</span></td>
         <td class="so-num">${Number(a.cur.salePrc).toLocaleString()}</td>
-        <td>${old}<span class="so-sub">무10 분담 ${a.consign ? '50/50 (합의)' : '100/0'}</span></td>
+        <td><b>${a.mm}개월</b><span class="so-sub">분담 ${a.sup > 0 ? `${100 - a.sup}/${a.sup} (합의)` : '100/0'}</span></td>
+        <td>${old}</td>
         <td>${st}${pr ? `<span class="so-sub">${pr}</span>` : ''}</td></tr>`;
     }).join('');
     $('nif-table').innerHTML = `<div class="so-stats">
         <div class="so-stat so-stat--brand"><div class="so-stat__label">직매입</div><div class="so-stat__value">${nD}</div></div>
         <div class="so-stat so-stat--brand"><div class="so-stat__label">위수탁</div><div class="so-stat__value">${nC}</div></div>
-        <div class="so-stat"><div class="so-stat__label">무10 등록됨</div><div class="so-stat__value">${n10}</div></div>
+        <div class="so-stat"><div class="so-stat__label">가격 인상</div><div class="so-stat__value">${nR}</div></div>
+        <div class="so-stat"><div class="so-stat__label">등록됨</div><div class="so-stat__value">${n10}</div></div>
         <div class="so-stat"><div class="so-stat__label">오류</div><div class="so-stat__value">${nE}</div></div></div>
       <div class="so-section-head">미리보기 <span class="so-section-head__count">${list.length}</span></div>
-      <div class="so-table-wrap"><table class="so-table"><tr><th>상품</th><th>형태</th><th class="so-num">현재가</th><th>기존 무이자</th><th>할 일</th></tr>${rows}</table></div>
-      <div class="so-hint">무10 ${short(win.s)} ~ ${short(win.e)} · 기존 무이자 종료 ${short(win.oldEnd)} · 복구 ${short(win.rs)}~</div>`;
+      <div class="so-table-wrap"><table class="so-table"><tr><th>상품</th><th>형태</th><th class="so-num">현재가</th><th>방송중 무이자</th><th>기존 무이자</th><th>할 일</th></tr>${rows}</table></div>
+      <div class="so-hint">방송중 무이자 ${short(win.s)} ~ ${short(win.e)} · 기존 무이자 종료 ${short(win.oldEnd)} · 복구 ${short(win.rs)}~</div>`;
   }
   async function collect(codes, win) {
     const out = [];
-    for (const cd of codes) {
-      try { const { d, dc } = await loadProduct(cd); names[cd] = d.promotion.prdNm; const a = analyze(cd, d, dc, win); a.d = d; out.push(a); }
-      catch (e) { out.push({ cd, err: e.message }); }
+    for (const { cd, mm } of codes) {
+      try { const { d, dc } = await loadProduct(cd); names[cd] = d.promotion.prdNm; const a = analyze(cd, d, dc, win, mm); a.d = d; out.push(a); }
+      catch (e) { out.push({ cd, mmIn: mm, err: e.message }); }
     }
     return out;
   }
@@ -447,12 +486,12 @@
     L.push(`URL: ${location.href.split('?')[0]}`);
     L.push(`브라우저: ${navigator.userAgent} / 창 ${innerWidth}x${innerHeight}`);
     L.push(`현재 단계: ${S.step} / 로그인정보: ${p ? '있음(만료 ' + Math.round((p.exp * 1000 - Date.now()) / 60000) + '분 후)' : '없음'}`);
-    L.push(`입력: 상품코드 ${($('nif-codes').value.match(/\b1\d{9}\b/g) || []).join(',')} / 방송 ${$('nif-bs').value} ~ ${$('nif-be').value} / 위수탁 200,000 적용 ${$('nif-ra').value || '(기본: 전날 03:00)'}`);
+    L.push(`입력: 상품코드 ${[...$('nif-codes').value.matchAll(CODE_RE)].map(m => m[1] + (m[2] ? '(' + m[2] + '개월)' : '')).join(',')} / 기본 개월수 ${$('nif-mm').value} / 방송 ${$('nif-bs').value} ~ ${$('nif-be').value} / 위수탁 가격 인상 적용 ${$('nif-ra').value || '(기본: 전날 03:00)'}`);
     if (plan) {
-      L.push(`무10 구간: ${plan.win.s} ~ ${plan.win.e} / 기존 종료 ${plan.win.oldEnd} / 복구 ${plan.win.rs}~`);
+      L.push(`무이자 구간: ${plan.win.s} ~ ${plan.win.e} / 기존 종료 ${plan.win.oldEnd} / 복구 ${plan.win.rs}~`);
       L.push('\n## 미리보기 결과');
       plan.list.forEach(a => L.push(a.err ? `- ${a.cd} 오류: ${a.err}` :
-        `- ${a.cd} ${a.nm} | ${a.consign ? '위수탁' : '직매입'} | 마지막가 ${a.cur.salePrc}@${a.cur.validStrDtm} | 기준가 ${a.basePrc} | 단계 ${a.steps.join('>') || '-'} | 기존무이자 ${a.old ? a.old.mm + '개월/업체' + a.old.sup + '/~' + a.old.end : '없음'} | 무10 ${a.has10 ? '있음' : '없음'} | 복구 ${a.restoreRow ? '있음' : '없음'} | 합의진행중 ${!!a.dc.inProgressSupplierAgree}`));
+        `- ${a.cd} ${a.nm} | ${a.consign ? '위수탁' : '직매입'} | 무${a.mm}(입력 ${a.mmIn}) 당사${100 - a.sup}/업체${a.sup} 기준가 ${a.minPrc}${a.skip ? ' 건너뜀:' + a.skip : ''} | 마지막가 ${a.cur.salePrc}@${a.cur.validStrDtm} | 기준가 ${a.basePrc} | 단계 ${a.steps.join('>') || '-'} | 기존무이자 ${a.old ? a.old.mm + '개월/업체' + a.old.sup + '/~' + a.old.end : '없음'} | 방송중무이자 ${a.newRow ? '있음' : '없음'} | 복구 ${a.restoreRow ? '있음' : '없음'} | 합의진행중 ${!!a.dc.inProgressSupplierAgree}`));
     }
     L.push('\n## 오류·경고 기록');
     L.push(S.errors.length ? S.errors.map(e => '- ' + e).join('\n') : '- 없음');
@@ -493,18 +532,18 @@
       render(list, inp.win);
       stage = 1; renderSteps();
       const nC = list.filter(a => a.consign && !a.err).length, nD = list.filter(a => !a.consign && !a.err).length;
-      logEl.textContent = `미리보기 완료: 직매입 ${nD} · 위수탁 ${nC} · 오류 ${list.filter(a => a.err).length}\n내용 확인 후 ② 실행`;
+      logEl.textContent = `미리보기 완료: 직매입 ${nD} · 위수탁 ${nC} · 가격 인상 필요 ${list.filter(a => !a.err && !a.newRow && !a.skip && a.needRaise).length} · 오류 ${list.filter(a => a.err).length}\n내용 확인 후 ② 실행`;
     } catch (e) { logEl.textContent = '⚠ ' + e.message; S.errors.push(`[${tnow()}] (${S.step}) ${e.message}`); plan = null; stage = 0; renderSteps(); }
     busy(false);
   };
   async function runAll(stg) {
     if (!plan) return;
     const { win, ra } = plan;
-    const target = plan.list.filter(a => !a.err && (stg === 1 || a.consign));
+    const target = plan.list.filter(a => !a.err && (stg === 1 || a.twoStage));
     if (!target.length) { logEl.textContent += '\n대상 없음'; return; }
     const body = stg === 1
-      ? `직매입 ${target.filter(a => !a.consign).length}개는 전체 진행하고, 위수탁 ${target.filter(a => a.consign).length}개는 무10 합의요청을 보내요.<br>직매입 20만 원 노출은 상품당 약 1분이에요.`
-      : `위수탁 ${target.length}개의 가격 원복과 기존 무이자 복구를 진행해요.<br>무10이 승인되지 않은 상품은 자동으로 건너뛰어요.`;
+      ? `${target.filter(a => !a.twoStage).length}개는 한 번에 끝까지 진행하고(직매입·위수탁 당사 100), 위수탁 ${target.filter(a => a.twoStage).length}개는 합의요청을 보내요.<br>개월수: ${[...new Set(target.map(a => a.mm))].sort((x, y) => x - y).map(m => '무' + m + ' ' + target.filter(a => a.mm === m).length + '개').join(', ')}<br>가격 인상은 ${target.filter(a => !a.newRow && !a.skip && a.needRaise).length}개예요. 한 번에 진행하는 상품의 기준가 노출은 약 1분이에요.`
+      : `위수탁 ${target.length}개의 가격 원복과 기존 무이자 복구를 진행해요.<br>방송중 무이자가 승인되지 않은 상품은 자동으로 건너뛰어요.`;
     busy(true);
     if (!await ask('info', stg === 1 ? '② 실행할까요?' : '③ 위수탁 2단계를 실행할까요?', body, '실행', '취소')) { busy(false); return; }
     agreeList = []; showAgree();
@@ -515,20 +554,20 @@
       for (const a0 of target) {
         try {
           const { d, dc } = await loadProduct(a0.cd);              // 실행 직전 최신 상태로 다시 계산
-          const a = analyze(a0.cd, d, dc, win); a.d = d;
-          if (stg === 1) await (a.consign ? runConsign1(a, win, log, ra) : runDirect(a, win, log));
+          const a = analyze(a0.cd, d, dc, win, a0.mmIn); a.d = d;
+          if (stg === 1) await (a.twoStage ? runConsign1(a, win, log, ra) : runDirect(a, win, log));
           else await runConsign2(a, win, log);
         } catch (e) { log(a0.cd, '오류: ' + e.message); }
       }
       log('', '— 결과 확인 중 —');
-      const list = await collect(target.map(a => a.cd), win);
+      const list = await collect(target.map(a => ({ cd: a.cd, mm: a.mmIn })), win);
       for (const a of list) {
         if (a.err) continue;
         const last = latestPrice(a.d);
-        // 위수탁 1단계(합의 대기)는 200,000 예약이 남는 게 정상
-        const expected = a.consign && !a.has10;
-        const warn = last.salePrc === MIN_PRICE && a.basePrc < MIN_PRICE && !expected ? ' ⚠ 200,000이 마지막 가격으로 남아 있음 — 원복 확인 필요' : '';
-        log(a.cd, `최종가 ${Number(last.salePrc).toLocaleString()}${a.consign ? ' (업체지급 ' + Number(last.supGivRtamt).toLocaleString() + ')' : ''} · 무10 ${a.has10 ? '등록' : (a.consign ? '합의 대기' : '없음')}${warn}`);
+        // 위수탁 1단계(합의 대기)는 기준가 예약이 남는 게 정상
+        const expected = a.twoStage && !a.newRow;
+        const warn = last.salePrc === a.minPrc && a.basePrc < a.minPrc && !expected ? ` ⚠ ${a.minPrc.toLocaleString()}이 마지막 가격으로 남아 있음 — 원복 확인 필요` : '';
+        log(a.cd, `최종가 ${Number(last.salePrc).toLocaleString()}${a.consign ? ' (업체지급 ' + Number(last.supGivRtamt).toLocaleString() + ')' : ''} · 무${a.mm} ${a.newRow ? '등록' : (a.twoStage ? '합의 대기' : '없음')}${warn}`);
       }
       log('', agreeList.length ? `완료 — 협력사 합의 요청 ${agreeList.length}건 (주황 상자의 [합의 요청 목록 복사])` : '완료');
       stage = Math.max(stage, stg === 1 ? 2 : 3); renderSteps();
